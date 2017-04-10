@@ -49,6 +49,8 @@
 #define ECC_ERR		0x40	/* ? */
 #define BBD_ERR		0x80	/* ? */
 
+#define EXTENDED_PARTITION	5
+
 struct partition {
 	unsigned char boot_ind;		/* 0x80 - active (unused) */
 	unsigned char head;		/* ? */

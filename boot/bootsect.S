@@ -53,6 +53,7 @@ start:
 	mov	cx,#256
 	sub	si,si
 	sub	di,di
+	cld
 	rep
 	movw
 	jmpi	go,INITSEG
