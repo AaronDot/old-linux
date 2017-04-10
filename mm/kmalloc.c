@@ -7,6 +7,11 @@
  *
  */
 
+/*
+ * Modified by Alex Bligh (alex@cconcepts.co.uk) 4 Apr 1994 to use multiple
+ * pages. So for 'page' throughout, read 'area'.
+ */
+
 #include <linux/mm.h>
 #include <asm/system.h>
 #include <linux/delay.h>
@@ -17,7 +22,7 @@
    I want this number to be increased in the near future:
         loadable device drivers should use this function to get memory */
 
-#define MAX_KMALLOC_K 4
+#define MAX_KMALLOC_K ((PAGE_SIZE<<(NUM_AREA_ORDERS-1))>>10)
 
 
 /* This defines how many times we should try to allocate a free page before
@@ -79,6 +84,7 @@ struct page_descriptor {
  */
 struct size_descriptor {
 	struct page_descriptor *firstfree;
+	struct page_descriptor *dmafree; /* DMA-able memory */
 	int size;
 	int nblocks;
 
@@ -86,25 +92,35 @@ struct size_descriptor {
 	int nfrees;
 	int nbytesmalloced;
 	int npages;
+	unsigned long gfporder; /* number of pages in the area required */
 };
 
+/*
+ * For now it is unsafe to allocate bucket sizes between n & n=16 where n is
+ * 4096 * any power of two
+ */
 
 struct size_descriptor sizes[] = { 
-	{ NULL,  32,127, 0,0,0,0 },
-	{ NULL,  64, 63, 0,0,0,0 },
-	{ NULL, 128, 31, 0,0,0,0 },
-	{ NULL, 252, 16, 0,0,0,0 },
-	{ NULL, 508,  8, 0,0,0,0 },
-	{ NULL,1020,  4, 0,0,0,0 },
-	{ NULL,2040,  2, 0,0,0,0 },
-	{ NULL,4080,  1, 0,0,0,0 },
-	{ NULL,   0,  0, 0,0,0,0 }
+	{ NULL, NULL,  32,127, 0,0,0,0, 0},
+	{ NULL, NULL,  64, 63, 0,0,0,0, 0 },
+	{ NULL, NULL, 128, 31, 0,0,0,0, 0 },
+	{ NULL, NULL, 252, 16, 0,0,0,0, 0 },
+	{ NULL, NULL, 508,  8, 0,0,0,0, 0 },
+	{ NULL, NULL,1020,  4, 0,0,0,0, 0 },
+	{ NULL, NULL,2040,  2, 0,0,0,0, 0 },
+	{ NULL, NULL,4096-16,  1, 0,0,0,0, 0 },
+	{ NULL, NULL,8192-16,  1, 0,0,0,0, 1 },
+	{ NULL, NULL,16384-16,  1, 0,0,0,0, 2 },
+	{ NULL, NULL,32768-16,  1, 0,0,0,0, 3 },
+	{ NULL, NULL,65536-16,  1, 0,0,0,0, 4 },
+	{ NULL, NULL,131072-16,  1, 0,0,0,0, 5 },
+	{ NULL, NULL,   0,  0, 0,0,0,0, 0 }
 };
 
 
 #define NBLOCKS(order)          (sizes[order].nblocks)
 #define BLOCKSIZE(order)        (sizes[order].size)
-
+#define AREASIZE(order)		(PAGE_SIZE<<(sizes[order].gfporder))
 
 
 long kmalloc_init (long start_mem,long end_mem)
@@ -118,12 +134,12 @@ long kmalloc_init (long start_mem,long end_mem)
 for (order = 0;BLOCKSIZE(order);order++)
     {
     if ((NBLOCKS (order)*BLOCKSIZE(order) + sizeof (struct page_descriptor)) >
-        PAGE_SIZE) 
+        AREASIZE(order)) 
         {
         printk ("Cannot use %d bytes out of %d in order = %d block mallocs\n",
-                NBLOCKS (order) * BLOCKSIZE(order) + 
-                        sizeof (struct page_descriptor),
-                (int) PAGE_SIZE,
+                (int) (NBLOCKS (order) * BLOCKSIZE(order) + 
+                        sizeof (struct page_descriptor)),
+                (int) AREASIZE(order),
                 BLOCKSIZE (order));
         panic ("This only happens if someone messes with kmalloc");
         }
@@ -149,27 +165,27 @@ void * kmalloc (size_t size, int priority)
 {
 	unsigned long flags;
 	int order,tries,i,sz;
+	int dma_flag;
 	struct block_header *p;
 	struct page_descriptor *page;
-	extern unsigned long intr_count;
 
+	dma_flag = (priority & GFP_DMA);
+	priority &= GFP_LEVEL_MASK;
+	  
 /* Sanity check... */
 	if (intr_count && priority != GFP_ATOMIC) {
-		printk("kmalloc called nonatomically from interrupt %08lx\n",
-			((unsigned long *)&size)[-1]);
-		priority = GFP_ATOMIC;
+		static int count = 0;
+		if (++count < 5) {
+			printk("kmalloc called nonatomically from interrupt %p\n",
+				__builtin_return_address(0));
+			priority = GFP_ATOMIC;
+		}
 	}
-if (size > MAX_KMALLOC_K * 1024) 
-     {
-     printk ("kmalloc: I refuse to allocate %d bytes (for now max = %d).\n",
-                size,MAX_KMALLOC_K*1024);
-     return (NULL);
-     }
 
 order = get_order (size);
 if (order < 0)
     {
-    printk ("kmalloc of too large a block (%d bytes).\n",size);
+    printk ("kmalloc of too large a block (%d bytes).\n",(int) size);
     return (NULL);
     }
 
@@ -182,7 +198,7 @@ while (tries --)
     {
     /* Try to allocate a "recently" freed memory block */
     cli ();
-    if ((page = sizes[order].firstfree) &&
+    if ((page = (dma_flag ? sizes[order].dmafree : sizes[order].firstfree)) &&
         (p    =  page->firstfree))
         {
         if (p->bh_flags == MF_FREE)
@@ -191,8 +207,11 @@ while (tries --)
             page->nfree--;
             if (!page->nfree)
                 {
-                sizes[order].firstfree = page->next;
-                page->next = NULL;
+		  if(dma_flag)
+		    sizes[order].dmafree = page->next;
+		  else
+		    sizes[order].firstfree = page->next;
+		  page->next = NULL;
                 }
             restore_flags(flags);
 
@@ -213,12 +232,19 @@ while (tries --)
     sz = BLOCKSIZE(order); /* sz is the size of the blocks we're dealing with */
 
     /* This can be done with ints on: This is private to this invocation */
-    page = (struct page_descriptor *) __get_free_page (priority & GFP_LEVEL_MASK);
-    if (!page) 
-        {
-        printk ("Couldn't get a free page.....\n");
+    if (dma_flag)
+      page = (struct page_descriptor *) __get_dma_pages (priority & GFP_LEVEL_MASK, sizes[order].gfporder);
+    else
+      page = (struct page_descriptor *) __get_free_pages (priority & GFP_LEVEL_MASK, sizes[order].gfporder);
+
+    if (!page) {
+        static unsigned long last = 0;
+        if (last + 10*HZ < jiffies) {
+        	last = jiffies;
+	        printk ("Couldn't get a free page.....\n");
+	}
         return NULL;
-        }
+    }
 #if 0
     printk ("Got page %08x to use for %d byte mallocs....",(long)page,sz);
 #endif
@@ -241,14 +267,19 @@ while (tries --)
     printk ("%d blocks per page\n",page->nfree);
 #endif
     /* Now we're going to muck with the "global" freelist for this size:
-       this should be uniterruptible */
+       this should be uninterruptible */
     cli ();
     /* 
      * sizes[order].firstfree used to be NULL, otherwise we wouldn't be
      * here, but you never know.... 
      */
-    page->next = sizes[order].firstfree;
-    sizes[order].firstfree = page;
+    if (dma_flag) {
+      page->next = sizes[order].dmafree;
+      sizes[order].dmafree = page;
+    } else {
+      page->next = sizes[order].firstfree;
+      sizes[order].firstfree = page;
+    }
     restore_flags(flags);
     }
 
@@ -262,10 +293,9 @@ printk ("Hey. This is very funny. I tried %d times to allocate a whole\n"
         "the author of this kmalloc: wolff@dutecai.et.tudelft.nl.\n"
         "(Executive summary: This can't happen)\n", 
                 MAX_GET_FREE_PAGE_TRIES,
-                size);
+                (int) size);
 return NULL;
 }
-
 
 void kfree_s (void *ptr,int size)
 {
@@ -294,7 +324,6 @@ if (size &&
     }
 size = p->bh_length;
 p->bh_flags = MF_FREE; /* As of now this block is officially free */
-
 save_flags(flags);
 cli ();
 p->bh_next = page->firstfree;
@@ -302,7 +331,8 @@ page->firstfree = p;
 page->nfree ++;
 
 if (page->nfree == 1)
-   { /* Page went from full to one free block: put it on the freelist */
+   { /* Page went from full to one free block: put it on the freelist.  Do not bother
+      trying to put it on the DMA list. */
    if (page->next)
         {
         printk ("Page %p already on freelist dazed and confused....\n", page);
@@ -324,21 +354,35 @@ if (page->nfree == NBLOCKS (page->order))
         {
         sizes[order].firstfree = page->next;
         }
+    else if (sizes[order].dmafree == page)
+        {
+        sizes[order].dmafree = page->next;
+        }
     else
         {
         for (pg2=sizes[order].firstfree;
                 (pg2 != NULL) && (pg2->next != page);
                         pg2=pg2->next)
             /* Nothing */;
+	if (!pg2)
+	  for (pg2=sizes[order].dmafree;
+	       (pg2 != NULL) && (pg2->next != page);
+	       pg2=pg2->next)
+            /* Nothing */;
         if (pg2 != NULL)
             pg2->next = page->next;
         else
             printk ("Ooops. page %p doesn't show on freelist.\n", page);
         }
-    free_page ((long)page);
+/* FIXME: I'm sure we should do something with npages here (like npages--) */
+    free_pages ((long)page, sizes[order].gfporder);
     }
 restore_flags(flags);
 
+/* FIXME: ?? Are these increment & decrement operations guaranteed to be
+ *	     atomic? Could an IRQ not occur between the read & the write?
+ *	     Maybe yes on a x86 with GCC...??
+ */
 sizes[order].nfrees++;      /* Noncritical (monitoring) admin stuff */
 sizes[order].nbytesmalloced -= size;
 }
