@@ -65,7 +65,7 @@ extern int * blk_size[NR_BLK_DEV];
 #define DEVICE_NAME "ramdisk"
 #define DEVICE_REQUEST do_rd_request
 #define DEVICE_NR(device) ((device) & 7)
-#define DEVICE_ON(device)
+#define DEVICE_ON(device) 
 #define DEVICE_OFF(device)
 
 #elif (MAJOR_NR == 2)
@@ -100,11 +100,16 @@ extern int * blk_size[NR_BLK_DEV];
 void (*DEVICE_INTR)(void) = NULL;
 #endif
 #ifdef DEVICE_TIMEOUT
-#define SET_INTR(x) (DEVICE_INTR = (x), \
-	timer_table[DEVICE_TIMEOUT].expires = jiffies + 200, \
-	timer_active |= 1<<DEVICE_TIMEOUT)
+
+#define SET_INTR(x) if (DEVICE_INTR = (x)) { \
+timer_table[DEVICE_TIMEOUT].expires = jiffies + 200; \
+timer_active |= 1<<DEVICE_TIMEOUT; \
+} else timer_active &= ~(1<<DEVICE_TIMEOUT)
+
 #else
+
 #define SET_INTR(x) (DEVICE_INTR = (x))
+
 #endif
 static void (DEVICE_REQUEST)(void);
 
@@ -134,23 +139,16 @@ extern inline void end_request(int uptodate)
 	CURRENT = CURRENT->next;
 }
 
-#ifdef DEVICE_TIMEOUT
-#define CLEAR_DEVICE_TIMEOUT timer_active &= ~(1<<DEVICE_TIMEOUT);
-#else
-#define CLEAR_DEVICE_TIMEOUT
-#endif
-
 #ifdef DEVICE_INTR
-#define CLEAR_DEVICE_INTR DEVICE_INTR = 0;
+#define CLEAR_INTR SET_INTR(NULL)
 #else
-#define CLEAR_DEVICE_INTR
+#define CLEAR_INTR
 #endif
 
 #define INIT_REQUEST \
 repeat: \
 	if (!CURRENT) {\
-		CLEAR_DEVICE_INTR \
-		CLEAR_DEVICE_TIMEOUT \
+		CLEAR_INTR; \
 		return; \
 	} \
 	if (MAJOR(CURRENT->dev) != MAJOR_NR) \

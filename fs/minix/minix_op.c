@@ -35,3 +35,4 @@ struct file_operations minix_file_operations = {
 	NULL,	/* read */
 	NULL	/* write */
 };
+	

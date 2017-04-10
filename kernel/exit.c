@@ -31,9 +31,9 @@ inline int send_sig(long sig,struct task_struct * p,int priv)
 		p->exit_code = 0;
 		p->signal &= ~( (1<<(SIGSTOP-1)) | (1<<(SIGTSTP-1)) |
 				(1<<(SIGTTIN-1)) | (1<<(SIGTTOU-1)) );
-	}
+	} 
 	/* Depends on order SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU */
-	if ((sig >= SIGSTOP) && (sig <= SIGTTOU))
+	if ((sig >= SIGSTOP) && (sig <= SIGTTOU)) 
 		p->signal &= ~(1<<(SIGCONT-1));
 	/* Actually deliver the signal */
 	p->signal |= (1<<(sig-1));
@@ -98,14 +98,14 @@ int bad_task_ptr(struct task_struct *p)
 			return 0;
 	return 1;
 }
-
+	
 /*
  * This routine scans the pid tree and make sure the rep invarient still
  * holds.  Used for debugging only, since it's very slow....
  *
  * It looks a lot scarier than it really is.... we're doing othing more
- * than verifying the doubly-linked list found n p_ysptr and p_osptr,
- * and checking it corresponds with the process tree defined by p_cptr and
+ * than verifying the doubly-linked list found n p_ysptr and p_osptr, 
+ * and checking it corresponds with the process tree defined by p_cptr and 
  * p_pptr;
  */
 void audit_ptree()
@@ -175,7 +175,7 @@ int session_of_pgrp(int pgrp)
 {
 	struct task_struct **p;
 
-	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
+ 	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
 		if ((*p)->pgrp == pgrp)
 			return((*p)->session);
 	return -1;
@@ -189,7 +189,7 @@ int kill_pg(int pgrp, int sig, int priv)
 
 	if (sig<0 || sig>32 || pgrp<=0)
 		return -EINVAL;
-	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
+ 	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
 		if ((*p)->pgrp == pgrp) {
 			if (sig && (err = send_sig(sig,*p,priv)))
 				retval = err;
@@ -201,7 +201,7 @@ int kill_pg(int pgrp, int sig, int priv)
 
 int kill_proc(int pid, int sig, int priv)
 {
-	struct task_struct **p;
+ 	struct task_struct **p;
 
 	if (sig<0 || sig>32)
 		return -EINVAL;
@@ -228,7 +228,7 @@ int sys_kill(int pid,int sig)
 				retval = err;
 		return(retval);
 	}
-	if (pid < 0)
+	if (pid < 0) 
 		return(kill_pg(-pid,sig,0));
 	/* Normal kill */
 	return(kill_proc(pid,sig,0));
@@ -237,9 +237,9 @@ int sys_kill(int pid,int sig)
 /*
  * Determine if a process group is "orphaned", according to the POSIX
  * definition in 2.2.2.52.  Orphaned process groups are not to be affected
- * by terminal-generated stop signals.  Newly orphaned process groups are
+ * by terminal-generated stop signals.  Newly orphaned process groups are 
  * to receive a SIGHUP and a SIGCONT.
- *
+ * 
  * "I ask you, have you ever known what it is to be an orphan?"
  */
 int is_orphaned_pgrp(int pgrp)
@@ -248,7 +248,7 @@ int is_orphaned_pgrp(int pgrp)
 
 	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p) {
 		if (!(*p) ||
-		    ((*p)->pgrp != pgrp) ||
+		    ((*p)->pgrp != pgrp) || 
 		    ((*p)->state == TASK_ZOMBIE) ||
 		    ((*p)->p_pptr->pid == 1))
 			continue;
@@ -292,7 +292,7 @@ volatile void do_exit(long code)
 	current->library = NULL;
 	current->state = TASK_ZOMBIE;
 	current->exit_code = code;
-	/*
+	/* 
 	 * Check to see if any process groups have become orphaned
 	 * as a result of our exiting, and if they have any stopped
 	 * jobs, send them a SIGUP and then a SIGCONT.  (POSIX 3.2.2.2)
@@ -300,7 +300,7 @@ volatile void do_exit(long code)
 	 * Case i: Our father is in a different pgrp than we are
 	 * and we were the only connection outside, so our pgrp
 	 * is about to become orphaned.
-	 */
+ 	 */
 	if ((current->p_pptr->pgrp != current->pgrp) &&
 	    (current->p_pptr->session == current->session) &&
 	    is_orphaned_pgrp(current->pgrp) &&
@@ -310,24 +310,24 @@ volatile void do_exit(long code)
 	}
 	/* Let father know we died */
 	send_sig (SIGCHLD, current->p_pptr, 1);
-
+	
 	/*
 	 * This loop does two things:
-	 *
-	 * A.  Make init inherit all the child processes
+	 * 
+  	 * A.  Make init inherit all the child processes
 	 * B.  Check to see if any process groups have become orphaned
 	 *	as a result of our exiting, and if they have any stopped
 	 *	jons, send them a SIGUP and then a SIGCONT.  (POSIX 3.2.2.2)
 	 */
 	if (p = current->p_cptr) {
 		while (1) {
-			p->flags &= ~PF_PTRACED;
+		        p->flags &= ~PF_PTRACED;
 			p->p_pptr = task[1];
 			if (p->state == TASK_ZOMBIE)
 				task[1]->signal |= (1<<(SIGCHLD-1));
 			/*
 			 * process group orphan check
-			 * Case ii: Our child is in a different pgrp
+			 * Case ii: Our child is in a different pgrp 
 			 * than we are, and it was the only connection
 			 * outside, so the child pgrp is now orphaned.
 			 */
@@ -343,8 +343,8 @@ volatile void do_exit(long code)
 				continue;
 			}
 			/*
-			 * This is it; link everything into init's children
-			 * and leave
+			 * This is it; link everything into init's children 
+			 * and leave 
 			 */
 			p->p_osptr = task[1]->p_cptr;
 			task[1]->p_cptr->p_ysptr = p;
@@ -359,12 +359,12 @@ volatile void do_exit(long code)
 
 		if (current->tty >= 0) {
 			tty = TTY_TABLE(current->tty);
-			if (tty->pgrp>0)
+			if (tty->pgrp > 0)
 				kill_pg(tty->pgrp, SIGHUP, 1);
-			tty->pgrp = 0;
+			tty->pgrp = -1;
 			tty->session = 0;
 		}
-		for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
+	 	for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
 			if ((*p)->session == current->session)
 				(*p)->tty = -1;
 	}
@@ -404,7 +404,7 @@ repeat:
 		}
 		switch (p->state) {
 			case TASK_STOPPED:
-				if (!(options & WUNTRACED) ||
+				if (!(options & WUNTRACED) || 
 				    !p->exit_code)
 					continue;
 				if (stat_addr)
@@ -443,3 +443,5 @@ repeat:
 	}
 	return -ECHILD;
 }
+
+

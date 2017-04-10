@@ -57,14 +57,14 @@ console.s console.o : console.c ../../include/linux/sched.h \
   ../../include/linux/tty.h ../../include/termios.h \
   ../../include/linux/config.h ../../include/asm/io.h \
   ../../include/asm/system.h ../../include/asm/segment.h \
-  ../../include/string.h ../../include/errno.h
+  ../../include/string.h ../../include/errno.h 
 pty.s pty.o : pty.c ../../include/linux/tty.h ../../include/termios.h \
   ../../include/sys/types.h ../../include/linux/sched.h \
   ../../include/linux/head.h ../../include/linux/fs.h \
   ../../include/linux/mm.h ../../include/linux/kernel.h \
   ../../include/signal.h ../../include/sys/param.h ../../include/sys/time.h \
   ../../include/time.h ../../include/sys/resource.h \
-  ../../include/asm/system.h ../../include/asm/io.h
+  ../../include/asm/system.h ../../include/asm/io.h 
 serial.s serial.o : serial.c ../../include/linux/tty.h ../../include/termios.h \
   ../../include/sys/types.h ../../include/linux/sched.h \
   ../../include/linux/head.h ../../include/linux/fs.h \
@@ -72,7 +72,7 @@ serial.s serial.o : serial.c ../../include/linux/tty.h ../../include/termios.h \
   ../../include/signal.h ../../include/sys/param.h ../../include/sys/time.h \
   ../../include/time.h ../../include/sys/resource.h \
   ../../include/linux/timer.h ../../include/asm/system.h \
-  ../../include/asm/io.h
+  ../../include/asm/io.h 
 tty_io.s tty_io.o : tty_io.c ../../include/ctype.h ../../include/errno.h \
   ../../include/signal.h ../../include/sys/types.h ../../include/unistd.h \
   ../../include/sys/stat.h ../../include/sys/time.h ../../include/time.h \
@@ -82,7 +82,7 @@ tty_io.s tty_io.o : tty_io.c ../../include/ctype.h ../../include/errno.h \
   ../../include/linux/head.h ../../include/linux/fs.h \
   ../../include/linux/mm.h ../../include/linux/kernel.h \
   ../../include/linux/tty.h ../../include/termios.h \
-  ../../include/asm/segment.h ../../include/asm/system.h
+  ../../include/asm/segment.h ../../include/asm/system.h 
 tty_ioctl.s tty_ioctl.o : tty_ioctl.c ../../include/errno.h ../../include/termios.h \
   ../../include/sys/types.h ../../include/linux/sched.h \
   ../../include/linux/head.h ../../include/linux/fs.h \
@@ -90,4 +90,4 @@ tty_ioctl.s tty_ioctl.o : tty_ioctl.c ../../include/errno.h ../../include/termio
   ../../include/signal.h ../../include/sys/param.h ../../include/sys/time.h \
   ../../include/time.h ../../include/sys/resource.h ../../include/linux/tty.h \
   ../../include/asm/io.h ../../include/asm/segment.h \
-  ../../include/asm/system.h
+  ../../include/asm/system.h 

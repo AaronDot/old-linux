@@ -4,11 +4,11 @@
 /* ok, this may be a joke, but I'm working on it */
 #define _POSIX_VERSION 198808L
 
-#define _POSIX_CHOWN_RESTRICTED	1	/* only root can do a chown (I think..) */
-#define _POSIX_NO_TRUNC		1	/* no pathname truncation (but see kernel) */
-#define _POSIX_VDISABLE		'\0'	/* character to disable things like ^C */
-#define _POSIX_JOB_CONTROL		1
-#define _POSIX_SAVED_IDS		1	/* Implemented, for whatever good it is */
+#define _POSIX_CHOWN_RESTRICTED	1    /* only root can do a chown (I think..) */
+#define _POSIX_NO_TRUNC		1    /* no pathname truncation (but see kernel) */
+#define _POSIX_VDISABLE		'\0' /* character to disable things like ^C */
+#define _POSIX_JOB_CONTROL	1
+#define _POSIX_SAVED_IDS	1    /* Implemented, for whatever good it is */
 
 #define STDIN_FILENO	0
 #define STDOUT_FILENO	1

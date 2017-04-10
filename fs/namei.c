@@ -76,7 +76,7 @@ int lookup(struct inode * dir,const char * name, int len,
 	}
 	if (!dir)
 		return -ENOENT;
-	if (!permission(dir,MAY_EXEC)) {
+ 	if (!permission(dir,MAY_EXEC)) {
 		iput(dir);
 		return -EACCES;
 	}
@@ -210,7 +210,7 @@ int open_namei(const char * pathname, int flag, int mode,
 	mode |= I_REGULAR;
 	if (!(dir = dir_namei(pathname,&namelen,&basename,NULL)))
 		return -ENOENT;
-	if (!namelen) {		/* special case: '/usr/' etc */
+	if (!namelen) {			/* special case: '/usr/' etc */
 		if (!(flag & (O_ACCMODE|O_CREAT|O_TRUNC))) {
 			*res_inode=dir;
 			return 0;
@@ -259,7 +259,7 @@ int sys_mknod(const char * filename, int mode, int dev)
 	const char * basename;
 	int namelen;
 	struct inode * dir;
-
+	
 	if (!suser())
 		return -EPERM;
 	if (!(dir = dir_namei(filename,&namelen,&basename, NULL)))
@@ -455,6 +455,6 @@ int sys_rename(const char * oldname, const char * newname)
 		iput(new_dir);
 		return -EPERM;
 	}
-	return old_dir->i_op->rename(old_dir, old_base, old_len,
+	return old_dir->i_op->rename(old_dir, old_base, old_len, 
 		new_dir, new_base, new_len);
 }

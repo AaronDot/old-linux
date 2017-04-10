@@ -21,3 +21,4 @@ void free_s(void * obj, int size);
  * permissions checks first, and check suser() last.
  */
 #define suser() (current->euid == 0)
+

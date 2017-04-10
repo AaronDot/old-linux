@@ -99,7 +99,7 @@ struct tss_struct {
 	long	gs;		/* 16 high bits zero */
 	long	ldt;		/* 16 high bits zero */
 	long	trace_bitmap;	/* bits: trace 0, bitmap 16-31 */
-	struct	i387_struct i387;
+	struct i387_struct i387;
 };
 
 struct task_struct {
@@ -115,17 +115,21 @@ struct task_struct {
 	unsigned long start_code,end_code,end_data,brk,start_stack;
 	long pid,pgrp,session,leader;
 	int	groups[NGROUPS];
-	/*
+	/* 
 	 * pointers to parent process, youngest child, younger sibling,
-	 * older sibling, respectively.  (p->father can be replaced with
+	 * older sibling, respectively.  (p->father can be replaced with 
 	 * p->p_pptr->pid)
 	 */
-	struct task_struct	*p_pptr, *p_cptr, *p_ysptr, *p_osptr;
+	struct task_struct *p_pptr, *p_cptr, *p_ysptr, *p_osptr;
+	/*
+	 * sleep makes a singly linked list with this.
+	 */
+	struct task_struct *next_wait;
 	unsigned short uid,euid,suid;
 	unsigned short gid,egid,sgid;
 	unsigned long timeout,alarm;
 	long utime,stime,cutime,cstime,start_time;
-	struct rlimit rlim[RLIM_NLIMITS];
+	struct rlimit rlim[RLIM_NLIMITS]; 
 	unsigned int flags;	/* per process flags, defined below */
 	unsigned short used_math;
 /* file system info */
@@ -164,7 +168,7 @@ struct task_struct {
 /* ec,brk... */	0,0,0,0,0,0, \
 /* pid etc.. */	0,0,0,0, \
 /* suppl grps*/ {NOGROUP,}, \
-/* proc links*/ &init_task.task,0,0,0, \
+/* proc links*/ &init_task.task,NULL,NULL,NULL,NULL, \
 /* uid etc */	0,0,0,0,0,0, \
 /* timeout */	0,0,0,0,0,0,0, \
 /* rlimits */   { {0x7fffffff, 0x7fffffff}, {0x7fffffff, 0x7fffffff},  \

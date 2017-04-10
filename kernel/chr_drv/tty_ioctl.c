@@ -53,7 +53,12 @@ static void flush(struct tty_queue * queue)
 
 static void wait_until_sent(struct tty_struct * tty)
 {
-	/* do nothing - not implemented */
+	cli();
+	while (!(current->signal & ~current->blocked) && !EMPTY(tty->write_q)) {
+		current->counter = 0;
+		interruptible_sleep_on(&tty->write_q->proc_list);
+	}
+	sti();
 }
 
 static void send_break(struct tty_struct * tty)
@@ -72,9 +77,9 @@ static int do_get_ps_info(int arg)
 	struct task_struct **p;
 	char *c, *d;
 	int i, n = 0;
-
+	
 	verify_area((void *)arg, sizeof(struct tstruct));
-
+		
 	for (p = &FIRST_TASK ; p <= &LAST_TASK ; p++, n++)
 		if (*p)
 		{
@@ -84,9 +89,9 @@ static int do_get_ps_info(int arg)
 				put_fs_byte(*c++, d++);
 			put_fs_long(1, (unsigned long *)(ts->present+n));
 		}
-		else
+		else	
 			put_fs_long(0, (unsigned long *)(ts->present+n));
-	return(0);
+	return(0);			
 }
 
 static int get_termios(struct tty_struct * tty, struct termios * termios)
@@ -137,7 +142,7 @@ static int get_termio(struct tty_struct * tty, struct termio * termio)
 }
 
 /*
- * This only works as the 386 is low-byt-first
+ * This only works as the 386 is low-byte-first
  */
 static int set_termio(struct tty_struct * tty, struct termio * termio,
 			int channel)
@@ -205,7 +210,7 @@ int tty_ioctl(int dev, int cmd, int arg)
 	int pgrp;
 
 	if (MAJOR(dev) == 5) {
-		dev=current->tty;
+		dev = current->tty;
 		if (dev<0)
 			return -EINVAL;
 	} else
@@ -216,7 +221,7 @@ int tty_ioctl(int dev, int cmd, int arg)
 		other_tty = tty_table + PTY_OTHER(dev);
 	else
 		other_tty = NULL;
-
+		
 	if (!(tty->write_q && tty->read_q && tty->secondary && tty->write))
 		return -EINVAL;
 	switch (cmd) {
@@ -255,11 +260,11 @@ int tty_ioctl(int dev, int cmd, int arg)
 			switch (arg) {
 			case TCOOFF:
 				tty->stopped = 1;
-				tty->write(tty);
+				TTY_WRITE(tty);
 				return 0;
 			case TCOON:
 				tty->stopped = 0;
-				tty->write(tty);
+				TTY_WRITE(tty);
 				return 0;
 			case TCIOFF:
 				if (STOP_CHAR(tty))
@@ -308,7 +313,7 @@ int tty_ioctl(int dev, int cmd, int arg)
 				return -EINVAL;
 			if (session_of_pgrp(pgrp) != current->session)
 				return -EPERM;
-			tty->pgrp = pgrp;
+			tty->pgrp = pgrp;			
 			return 0;
 		case TIOCOUTQ:
 			verify_area((void *) arg,4);
@@ -342,11 +347,11 @@ int tty_ioctl(int dev, int cmd, int arg)
 		case TIOCLINUX:
 			switch (get_fs_byte((char *)arg))
 			{
-				case 0:
+				case 0: 
 					return do_screendump(arg);
-				case 1:
+				case 1: 
 					return do_get_ps_info(arg);
-				default:
+				default: 
 					return -EINVAL;
 			}
 		default:

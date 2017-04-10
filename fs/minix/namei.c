@@ -315,7 +315,7 @@ int minix_mkdir(struct inode * dir, const char * name, int len, int mode)
 	struct inode * inode;
 	struct buffer_head * bh, *dir_block;
 	struct minix_dir_entry * de;
-
+	
 	bh = minix_find_entry(dir,name,len,&de);
 	if (bh) {
 		brelse(bh);
@@ -384,13 +384,13 @@ static int empty_dir(struct inode * inode)
 	len = inode->i_size / sizeof (struct minix_dir_entry);
 	if (len<2 || !inode->i_data[0] ||
 	    !(bh=bread(inode->i_dev,inode->i_data[0]))) {
-		printk("warning - bad directory on dev %04x\n",inode->i_dev);
+	    	printk("warning - bad directory on dev %04x\n",inode->i_dev);
 		return 0;
 	}
 	de = (struct minix_dir_entry *) bh->b_data;
-	if (de[0].inode != inode->i_ino || !de[1].inode ||
+	if (de[0].inode != inode->i_ino || !de[1].inode || 
 	    strcmp(".",de[0].name) || strcmp("..",de[1].name)) {
-		printk("warning - bad directory on dev %04x\n",inode->i_dev);
+	    	printk("warning - bad directory on dev %04x\n",inode->i_dev);
 		return 0;
 	}
 	nr = 2;

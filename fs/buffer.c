@@ -19,7 +19,7 @@
  */
 
 #include <stdarg.h>
-
+ 
 #include <linux/config.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
@@ -109,10 +109,15 @@ void inline invalidate_buffers(int dev)
 void check_disk_change(int dev)
 {
 	int i;
+	struct buffer_head * bh;
 
 	if (MAJOR(dev) != 2)
 		return;
-	if (!floppy_change(dev & 0x03))
+	if (!(bh = getblk(dev,0)))
+		return;
+	i = floppy_change(bh);
+	brelse(bh);
+	if (!i)
 		return;
 	for (i=0 ; i<NR_SUPER ; i++)
 		if (super_block[i].s_dev == dev)
@@ -199,7 +204,7 @@ static inline void insert_into_queues(struct buffer_head * bh)
 }
 
 static struct buffer_head * find_buffer(int dev, int block)
-{
+{		
 	struct buffer_head * tmp;
 
 	for (tmp = hash(dev,block) ; tmp != NULL ; tmp = tmp->b_next)
@@ -245,7 +250,7 @@ struct buffer_head * get_hash_table(int dev, int block)
 #define BADNESS(bh) (((bh)->b_dirt<<1)+(bh)->b_lock)
 struct buffer_head * getblk(int dev,int block)
 {
-	struct buffer_head * tmp, * bh;
+	struct buffer_head * bh, * tmp;
 	int buffers;
 
 repeat:
@@ -422,5 +427,5 @@ void buffer_init(long buffer_end)
 	free_list->b_prev_free = h;
 	h->b_next_free = free_list;
 	for (i=0;i<NR_HASH;i++)
-		hash_table[i]=NULL;
-}
+		hash_table[i] = NULL;
+}	

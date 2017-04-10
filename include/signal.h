@@ -9,16 +9,16 @@ typedef unsigned int sigset_t;		/* 32 bits */
 #define _NSIG             32
 #define NSIG		_NSIG
 
-#define SIGHUP		1
-#define SIGINT		2
-#define SIGQUIT		3
-#define SIGILL		4
-#define SIGTRAP		5
-#define SIGABRT		6
-#define SIGIOT		6
-#define SIGUNUSED	7
-#define SIGFPE		8
-#define SIGKILL		9
+#define SIGHUP		 1
+#define SIGINT		 2
+#define SIGQUIT		 3
+#define SIGILL		 4
+#define SIGTRAP		 5
+#define SIGABRT		 6
+#define SIGIOT		 6
+#define SIGUNUSED	 7
+#define SIGFPE		 8
+#define SIGKILL		 9
 #define SIGUSR1		10
 #define SIGSEGV		11
 #define SIGUSR2		12
@@ -59,13 +59,13 @@ typedef unsigned int sigset_t;		/* 32 bits */
 #define SA_NOMASK	0x40000000
 #define SA_ONESHOT	0x80000000
 
-#define SIG_BLOCK		0	/* for blocking signals */
-#define SIG_UNBLOCK		1	/* for unblocking signals */
-#define SIG_SETMASK		2	/* for setting the signal mask */
+#define SIG_BLOCK          0	/* for blocking signals */
+#define SIG_UNBLOCK        1	/* for unblocking signals */
+#define SIG_SETMASK        2	/* for setting the signal mask */
 
-#define SIG_DFL	((void (*)(int))0)	/* default signal handling */
-#define SIG_IGN	((void (*)(int))1)	/* ignore signal */
-#define SIG_ERR	((void (*)(int))-1)	/* error return from signal */
+#define SIG_DFL		((void (*)(int))0)	/* default signal handling */
+#define SIG_IGN		((void (*)(int))1)	/* ignore signal */
+#define SIG_ERR		((void (*)(int))-1)	/* error return from signal */
 
 #ifdef notdef
 #define sigemptyset(mask) ((*(mask) = 0), 1)

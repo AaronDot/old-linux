@@ -87,7 +87,7 @@ static void add_request(struct blk_dev_struct * dev, struct request * req)
 		(dev->request_fn)();
 		return;
 	}
-	for ( ; tmp->next ; tmp=tmp->next) {
+	for ( ; tmp->next ; tmp = tmp->next) {
 		if (!req->bh)
 			if (tmp->next->bh)
 				break;
@@ -98,8 +98,8 @@ static void add_request(struct blk_dev_struct * dev, struct request * req)
 		    IN_ORDER(req,tmp->next))
 			break;
 	}
-	req->next=tmp->next;
-	tmp->next=req;
+	req->next = tmp->next;
+	tmp->next = req;
 	sti();
 }
 
@@ -207,7 +207,7 @@ void ll_rw_block(int rw, struct buffer_head * bh)
 	unsigned int major;
 
 	if ((major=MAJOR(bh->b_dev)) >= NR_BLK_DEV ||
-	    !(blk_dev[major].request_fn)) {
+	!(blk_dev[major].request_fn)) {
 		printk("ll_rw_block: Trying to read nonexistent block-device\n\r");
 		return;
 	}
@@ -239,7 +239,7 @@ void ll_rw_swap_file(int rw, int dev, unsigned int *b, int nb, char *buf)
 		printk("ll_rw_swap: bad block dev command, must be R/W");
 		return;
 	}
-
+	
 	for (i=0; i<nb; i++, buf += BLOCK_SIZE)
 	{
 repeat:

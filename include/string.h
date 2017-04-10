@@ -23,7 +23,7 @@ extern char * strerror(int errno);
  *
  *		(C) 1991 Linus Torvalds
  */
-
+ 
 extern inline char * strcpy(char * dest,const char *src)
 {
 __asm__("cld\n"
@@ -291,7 +291,7 @@ __asm__("testl %1,%1\n\t"
 	"scasb\n\t"
 	"notl %%ecx\n\t"
 	"decl %%ecx\n\t"
-	"je 7f\n\t"		/* empty delimeter-string */
+	"je 7f\n\t"			/* empty delimeter-string */
 	"movl %%ecx,%%edx\n"
 	"2:\tlodsb\n\t"
 	"testb %%al,%%al\n\t"

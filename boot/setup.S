@@ -43,6 +43,12 @@ start:
 	int	0x15
 	mov	[2],ax
 
+! set the keyboard repeat rate to the max
+
+	mov	ax,#0x0305
+	mov	bx,#0x0000
+	int	0x16
+
 ! check for EGA/VGA and some config parameters
 
 	mov	ah,#0x12
@@ -60,9 +66,9 @@ novga:	mov	[14],ax
 	xor	bh,bh
 	int	0x10		! save it in known place, con_init fetches
 	mov	[0],dx		! it from 0x90000.
-
+	
 ! Get video-card data:
-
+	
 	mov	ah,#0x0f
 	int	0x10
 	mov	[4],bx		! bh = display page
@@ -265,7 +271,7 @@ noahed:	mov	dx,#0x3c3		! Check Chips & Tech. 'clues'
 	in	al,dx
 	or	al,#0x10
 	out	dx,al
-	mov	dx,#0x104
+	mov	dx,#0x104		
 	in	al,dx
 	mov	bl,al
 	mov	dx,#0x3c3
@@ -312,7 +318,7 @@ nocant:	mov	dx,#0x3d4		! Check Cirrus 'clues'
 	in	al,dx
 	cmp	al,#0x01
 	jne	nocirr
-	call	rst3d4
+	call	rst3d4	
 	lea	si,dsccirrus
 	lea	di,mocirrus
 	lea	cx,selmod
@@ -323,7 +329,7 @@ rst3d4:	mov	dx,#0x3d4
 	shl	ax,#8
 	add	ax,#0x0c
 	out	dx,ax
-	ret
+	ret	
 nocirr:	call	rst3d4			! Check Everex 'clues'
 	mov	ax,#0x7000
 	xor	bx,bx
@@ -342,7 +348,7 @@ nocirr:	call	rst3d4			! Check Everex 'clues'
 istrid:	lea	cx,ev2tri
 	jmp	cx
 noevrx:	lea	si,idgenoa		! Check Genoa 'clues'
-	xor	ax,ax
+	xor 	ax,ax
 	seg es
 	mov	al,[0x37]
 	mov	di,ax
@@ -355,7 +361,7 @@ l1:	inc	si
 	seg es
 	and	al,(di)
 	cmp	al,(si)
-	loope	l1
+	loope 	l1
 	cmp	cx,#0x00
 	jne	nogen
 	lea	si,dscgenoa
@@ -407,7 +413,7 @@ notrid:	mov	dx,#0x3cd		! Check Tseng 'clues'
 	mov	al,bl
 	out	dx,al
 	cmp	ah,#0x55
-	jne	notsen
+ 	jne	notsen
 	lea	si,dsctseng
 	lea	di,motseng
 	lea	cx,selmod
@@ -498,8 +504,25 @@ nozero:	sub	al,#0x80
 	lodsw
 	pop	ds
 	ret
-novid7:	pop	ds	! Here could be code to support standard 80x50,80x30
-	mov	ax,#0x5019
+novid7:
+	mov	ax,#0x1112
+	mov	bl,#0
+	int	0x10		! use 8x8 font set (50 lines on VGA)
+
+	mov	ax,#0x1200
+	mov	bl,#0x20
+	int	0x10		! use alternate print screen
+
+	mov	ax,#0x1201
+	mov	bl,#0x34
+	int	0x10		! turn off cursor emulation
+
+	mov	ah,#0x01
+	mov	cx,#0x0607
+	int	0x10		! turn on cursor (scan lines 6 to 7)
+
+	pop	ds
+	mov	ax,#0x5032	! return 80x50
 	ret
 
 ! Routine that 'tabs' to next col.
@@ -507,14 +530,14 @@ novid7:	pop	ds	! Here could be code to support standard 80x50,80x30
 spcing:	mov	al,#0x2e
 	call	prnt1
 	mov	al,#0x20
-	call	prnt1
+	call	prnt1	
+	mov	al,#0x20
+	call	prnt1	
+	mov	al,#0x20
+	call	prnt1	
 	mov	al,#0x20
 	call	prnt1
-	mov	al,#0x20
-	call	prnt1
-	mov	al,#0x20
-	call	prnt1
-	ret
+	ret	
 
 ! Routine to print asciiz-string at DS:SI
 
@@ -526,11 +549,11 @@ prtstr:	lodsb
 fin:	ret
 
 ! Routine to print a decimal value on screen, the value to be
-! printed is put in al (i.e 0-255).
+! printed is put in al (i.e 0-255). 
 
 dprnt:	push	ax
 	push	cx
-	mov	ah,#0x00
+	mov	ah,#0x00		
 	mov	cl,#0x0a
 	idiv	cl
 	cmp	al,#0x09
@@ -541,7 +564,7 @@ lt100:	add	al,#0x30
 	call	prnt1
 skip10:	mov	al,ah
 	add	al,#0x30
-	call	prnt1
+	call	prnt1	
 	pop	cx
 	pop	ax
 	ret
@@ -571,8 +594,8 @@ docr:	push	ax
 	int	0x10
 	pop	cx
 	pop	ax
-	ret
-
+	ret	
+	
 gdt:
 	.word	0,0,0,0		! dummy
 
@@ -600,7 +623,7 @@ msg2:		.ascii	"Mode:  COLSxROWS:"
 		db	0x0d, 0x0a, 0x0a, 0x00
 msg3:		.ascii	"Choose mode by pressing the corresponding number."
 		db	0x0d, 0x0a, 0x00
-
+		
 idati:		.ascii	"761295520"
 idcandt:	.byte	0xa5
 idgenoa:	.byte	0x77, 0x00, 0x66, 0x99
@@ -608,7 +631,7 @@ idparadise:	.ascii	"VGA="
 
 ! Manufacturer:	  Numofmodes:	Mode:
 
-moati:		.byte	0x02,	0x23, 0x33
+moati:		.byte	0x02,	0x23, 0x33 
 moahead:	.byte	0x05,	0x22, 0x23, 0x24, 0x2f, 0x34
 mocandt:	.byte	0x02,	0x60, 0x61
 mocirrus:	.byte	0x04,	0x1f, 0x20, 0x22, 0x31
@@ -631,7 +654,7 @@ dscparadise:	.word	0x8419, 0x842b
 dsctrident:	.word 	0x501e, 0x502b, 0x503c, 0x8419, 0x841e, 0x842b, 0x843c
 dsctseng:	.word	0x503c, 0x6428, 0x8419, 0x841c, 0x842c
 dscvideo7:	.word	0x502b, 0x503c, 0x643c, 0x8419, 0x842c, 0x841c
-
+	
 .text
 endtext:
 .data

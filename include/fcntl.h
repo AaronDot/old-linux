@@ -5,15 +5,15 @@
 
 /* open/fcntl - NOCTTY, NDELAY isn't implemented yet */
 #define O_ACCMODE	00003
-#define O_RDONLY	00
-#define O_WRONLY	01
-#define O_RDWR		02
+#define O_RDONLY	   00
+#define O_WRONLY	   01
+#define O_RDWR		   02
 #define O_CREAT		00100	/* not fcntl */
 #define O_EXCL		00200	/* not fcntl */
 #define O_NOCTTY	00400	/* not fcntl */
 #define O_TRUNC		01000	/* not fcntl */
 #define O_APPEND	02000
-#define O_NONBLOCK	04000	/* not fcntl */
+#define O_NONBLOCK	04000
 #define O_NDELAY	O_NONBLOCK
 
 /* Defines for fcntl-commands. Note that currently
@@ -35,9 +35,9 @@
 /* Ok, these are locking features, and aren't implemented at any
  * level. POSIX wants them.
  */
-#define F_RDLCK	0
-#define F_WRLCK	1
-#define F_UNLCK	2
+#define F_RDLCK		0
+#define F_WRLCK		1
+#define F_UNLCK		2
 
 /* Once again - not implemented, but ... */
 struct flock {

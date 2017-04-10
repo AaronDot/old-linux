@@ -74,7 +74,7 @@ int sys_write(unsigned int fd,char * buf,unsigned int count)
 {
 	struct file * file;
 	struct inode * inode;
-
+	
 	if (fd>=NR_OPEN || !(file=current->filp[fd]) || !(inode=file->f_inode))
 		return -EBADF;
 	if (!(file->f_mode&2))

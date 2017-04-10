@@ -22,7 +22,7 @@
  */
 static int C_A_D = 1;
 
-/*
+/* 
  * The timezone where the local system is located.  Used as a default by some
  * programs who obtain this value by using gettimeofday.
  */
@@ -92,22 +92,23 @@ void ctrl_alt_del(void)
 	if (C_A_D)
 		hard_reset_now();
 }
+	
 
 /*
  * This is done BSD-style, with no consideration of the saved gid, except
- * that if you set the effective gid, it sets the saved gid too.  This
+ * that if you set the effective gid, it sets the saved gid too.  This 
  * makes it possible for a setgid program to completely drop its privileges,
  * which is often a useful assertion to make when you are doing a security
  * audit over a program.
  *
  * The general idea is that a program which uses just setregid() will be
  * 100% compatible with BSD.  A program which uses just setgid() will be
- * 100% compatible with POSIX w/ Saved ID's.
+ * 100% compatible with POSIX w/ Saved ID's. 
  */
 int sys_setregid(int rgid, int egid)
 {
 	if (rgid>0) {
-		if ((current->gid == rgid) ||
+		if ((current->gid == rgid) || 
 		    suser())
 			current->gid = rgid;
 		else
@@ -126,7 +127,7 @@ int sys_setregid(int rgid, int egid)
 }
 
 /*
- * setgid() is implemeneted like SysV w/ SAVED_IDS
+ * setgid() is implemeneted like SysV w/ SAVED_IDS 
  */
 int sys_setgid(int gid)
 {
@@ -180,22 +181,22 @@ int sys_time(long * tloc)
  * Unprivileged users may change the real user id to the effective uid
  * or vice versa.  (BSD-style)
  *
- * When you set the effective uid, it sets the saved uid too.  This
+ * When you set the effective uid, it sets the saved uid too.  This 
  * makes it possible for a setuid program to completely drop its privileges,
  * which is often a useful assertion to make when you are doing a security
  * audit over a program.
  *
  * The general idea is that a program which uses just setreuid() will be
  * 100% compatible with BSD.  A program which uses just setuid() will be
- * 100% compatible with POSIX w/ Saved ID's.
+ * 100% compatible with POSIX w/ Saved ID's. 
  */
 int sys_setreuid(int ruid, int euid)
 {
 	int old_ruid = current->uid;
-
+	
 	if (ruid>0) {
 		if ((current->euid==ruid) ||
-		    (old_ruid == ruid) ||
+                    (old_ruid == ruid) ||
 		    suser())
 			current->uid = ruid;
 		else
@@ -203,7 +204,7 @@ int sys_setreuid(int ruid, int euid)
 	}
 	if (euid>0) {
 		if ((old_ruid == euid) ||
-		    (current->euid == euid) ||
+                    (current->euid == euid) ||
 		    suser()) {
 			current->euid = euid;
 			current->suid = euid;
@@ -216,15 +217,15 @@ int sys_setreuid(int ruid, int euid)
 }
 
 /*
- * setuid() is implemeneted like SysV w/ SAVED_IDS
- *
+ * setuid() is implemeneted like SysV w/ SAVED_IDS 
+ * 
  * Note that SAVED_ID's is deficient in that a setuid root program
- * like sendmail, for example, cannot set its uid to be a normal
+ * like sendmail, for example, cannot set its uid to be a normal 
  * user and then switch back, because if you're root, setuid() sets
  * the saved uid too.  If you don't like this, blame the bright people
  * in the POSIX commmittee and/or USG.  Note that the BSD-style setreuid()
  * will allow a root program to temporarily drop privileges and be able to
- * regain them by swapping the real and effective uid.
+ * regain them by swapping the real and effective uid.  
  */
 int sys_setuid(int uid)
 {
@@ -277,7 +278,7 @@ int sys_brk(unsigned long end_data_seg)
  */
 int sys_setpgid(int pid, int pgid)
 {
-	int i;
+	int i; 
 
 	if (!pid)
 		pid = current->pid;
@@ -287,13 +288,13 @@ int sys_setpgid(int pid, int pgid)
 		return -EINVAL;
 	for (i=0 ; i<NR_TASKS ; i++)
 		if (task[i] && (task[i]->pid == pid) &&
-		    ((task[i]->p_pptr == current) ||
-		    (task[i] == current))) {
+		    ((task[i]->p_pptr == current) || 
+		     (task[i] == current))) {
 			if (task[i]->leader)
 				return -EPERM;
 			if ((task[i]->session != current->session) ||
-			    ((pgid != pid) &&
-			    (session_of_pgrp(pgid) != current->session)))
+			    ((pgid != pid) && 
+			     (session_of_pgrp(pgid) != current->session)))
 				return -EPERM;
 			task[i]->pgrp = pgid;
 			return 0;
@@ -390,7 +391,7 @@ int sys_uname(struct utsname * name)
 int sys_sethostname(char *name, int len)
 {
 	int	i;
-
+	
 	if (!suser())
 		return -EPERM;
 	if (len > MAXHOSTNAMELEN)
@@ -410,11 +411,11 @@ int sys_getrlimit(int resource, struct rlimit *rlim)
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
 	verify_area(rlim,sizeof *rlim);
-	put_fs_long(current->rlim[resource].rlim_cur,
+	put_fs_long(current->rlim[resource].rlim_cur, 
 		    (unsigned long *) rlim);
-	put_fs_long(current->rlim[resource].rlim_max,
+	put_fs_long(current->rlim[resource].rlim_max, 
 		    ((unsigned long *) rlim)+1);
-	return 0;
+	return 0;	
 }
 
 int sys_setrlimit(int resource, struct rlimit *rlim)
@@ -428,7 +429,7 @@ int sys_setrlimit(int resource, struct rlimit *rlim)
 	new.rlim_max = get_fs_long(((unsigned long *) rlim)+1);
 	if (((new.rlim_cur > old->rlim_max) ||
 	     (new.rlim_max > old->rlim_max)) &&
-	     !suser())
+	    !suser())
 		return -EPERM;
 	*old = new;
 	return 0;
@@ -465,7 +466,7 @@ int sys_getrusage(int who, struct rusage *ru)
 	lp = (unsigned long *) &r;
 	lpend = (unsigned long *) (&r+1);
 	dest = (unsigned long *) ru;
-	for (; lp < lpend; lp++, dest++)
+	for (; lp < lpend; lp++, dest++) 
 		put_fs_long(*lp, dest);
 	return(0);
 }
@@ -476,7 +477,7 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 		verify_area(tv, sizeof *tv);
 		put_fs_long(startup_time + CT_TO_SECS(jiffies+jiffies_offset),
 			    (unsigned long *) tv);
-		put_fs_long(CT_TO_USECS(jiffies+jiffies_offset),
+		put_fs_long(CT_TO_USECS(jiffies+jiffies_offset), 
 			    ((unsigned long *) tv)+1);
 	}
 	if (tz) {
@@ -489,7 +490,7 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 
 /*
  * The first time we set the timezone, we will warp the clock so that
- * it is ticking GMT time instead of local time.  Presumably,
+ * it is ticking GMT time instead of local time.  Presumably, 
  * if someone is setting the timezone then we are running in an
  * environment where the programs understand about timezones.
  * This should be done at boot time in the /etc/rc script, as
@@ -517,7 +518,7 @@ int sys_settimeofday(struct timeval *tv, struct timezone *tz)
 
 		sec = get_fs_long((unsigned long *)tv);
 		usec = get_fs_long(((unsigned long *)tv)+1);
-
+	
 		startup_time = sec - jiffies/HZ;
 		jiffies_offset = usec * HZ / 1000000 - jiffies%HZ;
 	}
@@ -527,17 +528,17 @@ int sys_settimeofday(struct timeval *tv, struct timezone *tz)
 /*
  * Adjust the time obtained from the CMOS to be GMT time instead of
  * local time.
- *
+ * 
  * This is ugly, but preferable to the alternatives.  Otherwise we
  * would either need to write a program to do it in /etc/rc (and risk
- * confusion if the program gets run more than once; it would also be
+ * confusion if the program gets run more than once; it would also be 
  * hard to make the program warp the clock precisely n hours)  or
  * compile in the timezone information into the kernel.  Bad, bad....
  *
  * XXX Currently does not adjust for daylight savings time.  May not
  * need to do anything, depending on how smart (dumb?) the BIOS
  * is.  Blast it all.... the best thing to do not depend on the CMOS
- * clock at all, but get the time via NTP or timed if you're on a
+ * clock at all, but get the time via NTP or timed if you're on a 
  * network....				- TYT, 1/1/92
  */
 void adjust_clock()
@@ -552,3 +553,4 @@ int sys_umask(int mask)
 	current->umask = mask & 0777;
 	return (old);
 }
+

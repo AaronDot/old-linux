@@ -33,7 +33,7 @@ struct tm {
 
 #define	__isleap(year)	\
   ((year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0))
-
+  
 clock_t clock(void);
 time_t time(time_t * tp);
 double difftime(time_t time2, time_t time1);

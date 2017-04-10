@@ -132,17 +132,17 @@ void start_kernel(void)
  * Interrupts are still disabled. Do necessary setups, then
  * enable them
  */
-	ROOT_DEV = ORIG_ROOT_DEV;
+ 	ROOT_DEV = ORIG_ROOT_DEV;
 	sprintf(term, "TERM=con%dx%d", CON_COLS, CON_ROWS);
-	envp[1] = term;
+	envp[1] = term;	
 	envp_rc[1] = term;
 	envp_init[1] = term;
-	drive_info = DRIVE_INFO;
+ 	drive_info = DRIVE_INFO;
 	memory_end = (1<<20) + (EXT_MEM_K<<10);
 	memory_end &= 0xfffff000;
 	if (memory_end > 16*1024*1024)
 		memory_end = 16*1024*1024;
-	if (memory_end >= 12*1024*1024)
+	if (memory_end >= 12*1024*1024) 
 		buffer_memory_end = 4*1024*1024;
 	else if (memory_end >= 6*1024*1024)
 		buffer_memory_end = 2*1024*1024;
@@ -203,6 +203,7 @@ void init(void)
 		NR_BUFFERS*BLOCK_SIZE);
 	printf("Free mem: %d bytes\n\r",memory_end-main_memory_start);
 
+	execve("/etc/init",argv_init,envp_init);
 	execve("/bin/init",argv_init,envp_init);
 	/* if this fails, fall through to original stuff */
 

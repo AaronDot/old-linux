@@ -3,8 +3,6 @@
 
 #include <sys/types.h>
 
-#define TTY_BUF_SIZE 1024
-
 /* 0x54 is just a magic number to make these relatively uniqe ('T') */
 
 #define TCGETS		0x5401
@@ -34,7 +32,7 @@
 #define TIOCGSOFTCAR	0x5419
 #define TIOCSSOFTCAR	0x541A
 #define FIONREAD	0x541B
-#define TIOCINQ	FIONREAD
+#define TIOCINQ		FIONREAD
 #define TIOCLINUX	0x541C
 
 struct winsize {
@@ -65,23 +63,23 @@ struct termios {
 };
 
 /* c_cc characters */
-#define VINTR		0
-#define VQUIT		1
-#define VERASE		2
-#define VKILL		3
-#define VEOF		4
-#define VTIME		5
-#define VMIN		6
-#define VSWTC		7
-#define VSTART		8
-#define VSTOP		9
-#define VSUSP		10
-#define VEOL		11
-#define VREPRINT	12
-#define VDISCARD	13
-#define VWERASE		14
-#define VLNEXT		15
-#define VEOL2		16
+#define VINTR 0
+#define VQUIT 1
+#define VERASE 2
+#define VKILL 3
+#define VEOF 4
+#define VTIME 5
+#define VMIN 6
+#define VSWTC 7
+#define VSTART 8
+#define VSTOP 9
+#define VSUSP 10
+#define VEOL 11
+#define VREPRINT 12
+#define VDISCARD 13
+#define VWERASE 14
+#define VLNEXT 15
+#define VEOL2 16
 
 /* c_iflag bits */
 #define IGNBRK	0000001
@@ -159,8 +157,8 @@ struct termios {
 #define   CS8	0000060
 #define CSTOPB	0000100
 #define CREAD	0000200
-#define CPARENB	0000400
-#define CPARODD	0001000
+#define PARENB	0000400
+#define PARODD	0001000
 #define HUPCL	0002000
 #define CLOCAL	0004000
 #define CIBAUD	03600000		/* input baud rate (not used) */

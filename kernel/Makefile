@@ -56,48 +56,48 @@ exit.s exit.o : exit.c ../include/errno.h ../include/signal.h \
   ../include/linux/head.h ../include/linux/fs.h ../include/linux/mm.h \
   ../include/linux/kernel.h ../include/sys/param.h ../include/sys/time.h \
   ../include/time.h ../include/sys/resource.h ../include/linux/tty.h \
-  ../include/termios.h ../include/asm/segment.h
+  ../include/termios.h ../include/asm/segment.h 
 fork.s fork.o : fork.c ../include/errno.h ../include/linux/sched.h \
   ../include/linux/head.h ../include/linux/fs.h ../include/sys/types.h \
   ../include/linux/mm.h ../include/linux/kernel.h ../include/signal.h \
   ../include/sys/param.h ../include/sys/time.h ../include/time.h \
-  ../include/sys/resource.h ../include/asm/segment.h ../include/asm/system.h
-mktime.s mktime.o : mktime.c ../include/time.h
+  ../include/sys/resource.h ../include/asm/segment.h ../include/asm/system.h 
+mktime.s mktime.o : mktime.c ../include/time.h 
 panic.s panic.o : panic.c ../include/linux/kernel.h ../include/linux/sched.h \
   ../include/linux/head.h ../include/linux/fs.h ../include/sys/types.h \
   ../include/linux/mm.h ../include/signal.h ../include/sys/param.h \
-  ../include/sys/time.h ../include/time.h ../include/sys/resource.h
+  ../include/sys/time.h ../include/time.h ../include/sys/resource.h 
 printk.s printk.o : printk.c ../include/stdarg.h ../include/stddef.h \
-  ../include/linux/kernel.h
+  ../include/linux/kernel.h 
 ptrace.s ptrace.o : ptrace.c ../include/linux/head.h ../include/linux/kernel.h \
   ../include/linux/sched.h ../include/linux/fs.h ../include/sys/types.h \
   ../include/linux/mm.h ../include/signal.h ../include/sys/param.h \
   ../include/sys/time.h ../include/time.h ../include/sys/resource.h \
   ../include/errno.h ../include/asm/segment.h ../include/asm/system.h \
-  ../include/sys/ptrace.h
+  ../include/sys/ptrace.h 
 sched.s sched.o : sched.c ../include/linux/sched.h ../include/linux/head.h \
   ../include/linux/fs.h ../include/sys/types.h ../include/linux/mm.h \
   ../include/linux/kernel.h ../include/signal.h ../include/sys/param.h \
   ../include/sys/time.h ../include/time.h ../include/sys/resource.h \
   ../include/linux/timer.h ../include/linux/sys.h ../include/linux/fdreg.h \
   ../include/asm/system.h ../include/asm/io.h ../include/asm/segment.h \
-  ../include/errno.h
+  ../include/errno.h 
 signal.s signal.o : signal.c ../include/linux/sched.h ../include/linux/head.h \
   ../include/linux/fs.h ../include/sys/types.h ../include/linux/mm.h \
   ../include/linux/kernel.h ../include/signal.h ../include/sys/param.h \
   ../include/sys/time.h ../include/time.h ../include/sys/resource.h \
-  ../include/asm/segment.h ../include/sys/wait.h ../include/errno.h
+  ../include/asm/segment.h ../include/sys/wait.h ../include/errno.h 
 sys.s sys.o : sys.c ../include/errno.h ../include/linux/sched.h \
   ../include/linux/head.h ../include/linux/fs.h ../include/sys/types.h \
   ../include/linux/mm.h ../include/linux/kernel.h ../include/signal.h \
   ../include/sys/param.h ../include/sys/time.h ../include/time.h \
   ../include/sys/resource.h ../include/linux/tty.h ../include/termios.h \
   ../include/linux/config.h ../include/asm/segment.h ../include/sys/times.h \
-  ../include/sys/utsname.h ../include/string.h
+  ../include/sys/utsname.h ../include/string.h 
 traps.s traps.o : traps.c ../include/string.h ../include/linux/head.h \
   ../include/linux/sched.h ../include/linux/fs.h ../include/sys/types.h \
   ../include/linux/mm.h ../include/linux/kernel.h ../include/signal.h \
   ../include/sys/param.h ../include/sys/time.h ../include/time.h \
   ../include/sys/resource.h ../include/asm/system.h ../include/asm/segment.h \
-  ../include/asm/io.h ../include/errno.h
-vsprintf.s vsprintf.o : vsprintf.c ../include/stdarg.h ../include/string.h
+  ../include/asm/io.h ../include/errno.h 
+vsprintf.s vsprintf.o : vsprintf.c ../include/stdarg.h ../include/string.h 

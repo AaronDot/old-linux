@@ -10,10 +10,10 @@ typedef char *va_list;
   (((sizeof (TYPE) + sizeof (int) - 1) / sizeof (int)) * sizeof (int))
 
 #ifndef __sparc__
-#define va_start(AP, LASTARG)						\
+#define va_start(AP, LASTARG) 						\
  (AP = ((char *) &(LASTARG) + __va_rounded_size (LASTARG)))
 #else
-#define va_start(AP, LASTARG)						\
+#define va_start(AP, LASTARG) 						\
  (__builtin_saveregs (),						\
   AP = ((char *) &(LASTARG) + __va_rounded_size (LASTARG)))
 #endif

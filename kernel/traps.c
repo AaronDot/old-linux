@@ -20,6 +20,7 @@
 #include <asm/io.h>
 #include <errno.h>
 
+
 #define get_seg_byte(seg,addr) ({ \
 register char __res; \
 __asm__("push %%fs;mov %%ax,%%fs;movb %%fs:%2,%%al;pop %%fs" \
