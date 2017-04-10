@@ -8,9 +8,9 @@
  *	Ported from BSD to Linux,
  *		Alan Cox 22/Nov/1994.
  *	Merged and included the FreeBSD-Current changes at Ugen's request
- *	(but hey its a lot cleaner now). Ugen would prefer in some ways
+ *	(but hey it's a lot cleaner now). Ugen would prefer in some ways
  *	we waited for his final product but since Linux 1.2.0 is about to
- *	appear its not practical - Read: It works, its not clean but please
+ *	appear it's not practical - Read: It works, it's not clean but please
  *	don't consider it to be his standard of finished work.
  *		Alan.
  *
@@ -80,7 +80,7 @@ struct ip_fw
 				 * (ports[0] <= port <= ports[1])     *
 				 *                                    */
 #define IP_FW_F_PRN	0x020	/* In verbose mode print this firewall*/
-#define IP_FW_F_BIDIR	0x040	/* For accounting-count two way       */
+#define IP_FW_F_BIDIR	0x040	/* For bidirectional firewalls        */
 #define IP_FW_F_TCPSYN	0x080	/* For tcp packets-check SYN only     */
 #define IP_FW_F_ICMPRPL 0x100	/* Send back icmp unreachable packet  */
 #define IP_FW_F_MASK	0x1FF	/* All possible flag bits mask        */
@@ -111,6 +111,15 @@ struct ip_fw
 #define IP_ACCT_FLUSH    (IP_FW_BASE_CTL+18)
 #define IP_ACCT_ZERO     (IP_FW_BASE_CTL+19)
 
+struct ip_fwpkt
+{
+	struct iphdr fwp_iph;			/* IP header */
+	union {
+		struct tcphdr fwp_tcph;		/* TCP header or */
+		struct udphdr fwp_udph;		/* UDP header */
+	} fwp_protoh;
+	struct in_addr fwp_via;			/* interface address */
+};
 
 /*
  *	Main firewall chains definitions and global var's definitions.
@@ -129,10 +138,10 @@ extern int ip_fw_ctl(int, void *, int);
 #endif
 #ifdef CONFIG_IP_ACCT
 extern struct ip_fw *ip_acct_chain;
-extern int ip_acct_cnt(struct iphdr *, struct device *, struct ip_fw *);
+extern void ip_acct_cnt(struct iphdr *, struct device *, struct ip_fw *);
 extern int ip_acct_ctl(int, void *, int);
 #endif
-extern int ip_fw_chk(struct iphdr *, struct device *rif,struct ip_fw *, int);
+extern int ip_fw_chk(struct iphdr *, struct device *rif,struct ip_fw *, int, int);
 #endif /* KERNEL */
 
 #endif /* _IP_FW_H */

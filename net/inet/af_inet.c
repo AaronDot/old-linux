@@ -270,7 +270,7 @@ void destroy_sock(struct sock *sk)
 
   	sk->inuse = 1;			/* just to be safe. */
 
-  	/* Incase it's sleeping somewhere. */
+  	/* In case it's sleeping somewhere. */
   	if (!sk->dead) 
   		sk->write_space(sk);
 
@@ -474,8 +474,8 @@ static int inet_listen(struct socket *sock, int backlog)
 	 * somewhere. We might as well truncate it to what everybody
 	 * else does..
 	 */
-	if (backlog > 5)
-		backlog = 5;
+	if ((unsigned) backlog > 128)
+		backlog = 128;
 	sk->max_ack_backlog = backlog;
 	if (sk->state != TCP_LISTEN)
 	{
@@ -778,9 +778,12 @@ static int inet_release(struct socket *sock, struct socket *peer)
 	 * If linger is set, we don't return until the close
 	 * is complete.  Other wise we return immediately. The
 	 * actually closing is done the same either way.
+	 *
+	 * If the close is due to the process exiting, we never
+	 * linger..
 	 */
 
-	if (sk->linger == 0) 
+	if (sk->linger == 0 || (current->flags & PF_EXITING))
 	{
 		sk->prot->close(sk,0);
 		sk->dead = 1;
@@ -812,8 +815,8 @@ static int inet_release(struct socket *sock, struct socket *peer)
 	sk->inuse = 1;
 
 	/* This will destroy it. */
-	release_sock(sk);
 	sock->data = NULL;
+	release_sock(sk);
 	sk->socket = NULL;
 	return(0);
 }
@@ -936,8 +939,15 @@ static int inet_connect(struct socket *sock, struct sockaddr * uaddr,
 		return 0;	/* Rock and roll */
 	}
 
-	if (sock->state == SS_CONNECTING && sk->protocol == IPPROTO_TCP && (flags & O_NONBLOCK))
+	if (sock->state == SS_CONNECTING && sk->protocol == IPPROTO_TCP && (flags & O_NONBLOCK)) {
+		if (sk->err != 0)
+		{
+			err=sk->err;
+			sk->err=0;
+			return -err;
+		}
 		return -EALREADY;	/* Connecting is currently in progress */
+	}
   	
 	if (sock->state != SS_CONNECTING) 
 	{
@@ -1019,7 +1029,7 @@ static int inet_accept(struct socket *sock, struct socket *newsock, int flags)
 	/*
 	 * We've been passed an extra socket.
 	 * We need to free it up because the tcp module creates
-	 * it's own when it accepts one.
+	 * its own when it accepts one.
 	 */
 	if (newsock->data)
 	{
@@ -1249,7 +1259,7 @@ static int inet_select(struct socket *sock, int sel_type, select_table *wait )
 static int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 {
 	struct sock *sk=(struct sock *)sock->data;
-	int err;
+	int err, pid;
 
 	switch(cmd) 
 	{
@@ -1258,7 +1268,11 @@ static int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 			err=verify_area(VERIFY_READ,(int *)arg,sizeof(long));
 			if(err)
 				return err;
-			sk->proc = get_fs_long((int *) arg);
+			pid = get_fs_long((int *) arg);
+			/* see inet_fcntl */
+			if (current->pid != pid && current->pgrp != -pid && !suser())
+				return -EPERM;
+			sk->proc = pid;
 			return(0);
 		case FIOGETOWN:
 		case SIOCGPGRP:

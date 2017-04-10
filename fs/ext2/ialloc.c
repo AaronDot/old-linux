@@ -1,9 +1,10 @@
 /*
  *  linux/fs/ext2/ialloc.c
  *
- *  Copyright (C) 1992, 1993, 1994  Remy Card (card@masi.ibp.fr)
- *                                  Laboratoire MASI - Institut Blaise Pascal
- *                                  Universite Pierre et Marie Curie (Paris VI)
+ * Copyright (C) 1992, 1993, 1994, 1995
+ * Remy Card (card@masi.ibp.fr)
+ * Laboratoire MASI - Institut Blaise Pascal
+ * Universite Pierre et Marie Curie (Paris VI)
  *
  *  BSD ufs-inspired inode and directory allocation by 
  *  Stephen Tweedie (sct@dcs.ed.ac.uk), 1993
@@ -358,7 +359,7 @@ repeat:
 	else 
 	{
 		/*
-		 * Try to place the inode in it's parent directory
+		 * Try to place the inode in its parent directory
 		 */
 		i = dir->u.ext2_i.i_block_group;
 		tmp = get_group_desc (sb, i, &bh2);

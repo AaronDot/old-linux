@@ -68,6 +68,7 @@
  *		Bjorn Ekwall	:	Removed ip_csum (from slhc.c too)
  *		Bjorn Ekwall	:	Moved ip_fast_csum to ip.h (inline!)
  *		Stefan Becker   :       Send out ICMP HOST REDIRECT
+ *		Alan Cox	:	Only send ICMP_REDIRECT if src/dest are the same net.
  *  
  *
  * To Fix:
@@ -109,6 +110,7 @@
 #include "protocol.h"
 #include "route.h"
 #include "tcp.h"
+#include "udp.h"
 #include <linux/skbuff.h>
 #include "sock.h"
 #include "arp.h"
@@ -1133,7 +1135,7 @@ void ip_fragment(struct sock *sk, struct sk_buff *skb, struct device *dev, int i
 
 	if(mtu<8)
 	{
-		/* It's wrong but its better than nothing */
+		/* It's wrong but it's better than nothing */
 		icmp_send(skb,ICMP_DEST_UNREACH,ICMP_FRAG_NEEDED,dev->mtu, dev);
 		ip_statistics.IpFragFails++;
 		return;
@@ -1145,7 +1147,7 @@ void ip_fragment(struct sock *sk, struct sk_buff *skb, struct device *dev, int i
 
 	/*
 	 *	The initial offset is 0 for a complete frame. When
-	 *	fragmenting fragments its wherever this one starts.
+	 *	fragmenting fragments it's wherever this one starts.
 	 */
 
 	if (is_frag & 2)
@@ -1270,7 +1272,7 @@ static void ip_forward(struct sk_buff *skb, struct device *dev, int is_frag)
 #ifdef CONFIG_IP_FIREWALL
 	int err;
 	
-	if((err=ip_fw_chk(skb->h.iph, dev, ip_fw_fwd_chain, ip_fw_fwd_policy))!=1)
+	if((err=ip_fw_chk(skb->h.iph, dev, ip_fw_fwd_chain, ip_fw_fwd_policy, 0))!=1)
 	{
 		if(err==-1)
 			icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, dev);
@@ -1364,11 +1366,11 @@ static void ip_forward(struct sk_buff *skb, struct device *dev, int is_frag)
 	 *	arrived upon. We now generate an ICMP HOST REDIRECT giving the route
 	 *	we calculated.
 	 */
-#ifdef IP_NO_ICMP_REDIRECT
+#ifdef CONFIG_IP_NO_ICMP_REDIRECT
 	if (dev == dev2)
 		return;
 #else
-	if (dev == dev2)
+	if (dev == dev2 && (iph->saddr&dev->pa_mask) == (iph->daddr & dev->pa_mask))
 		icmp_send(skb, ICMP_REDIRECT, ICMP_REDIR_HOST, raddr, dev);
 #endif		
 
@@ -1434,7 +1436,7 @@ static void ip_forward(struct sk_buff *skb, struct device *dev, int is_frag)
 			
 			/*
 			 *	Map service types to priority. We lie about
-			 *	throughput being low priority, but its a good
+			 *	throughput being low priority, but it's a good
 			 *	choice to help improve general usage.
 			 */
 			if(iph->tos & IPTOS_LOWDELAY)
@@ -1487,7 +1489,8 @@ int ip_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 	 *	(4.	We ought to check for IP multicast addresses and undefined types.. does this matter ?)
 	 */
 
-	if (skb->len<sizeof(struct iphdr) || iph->ihl<5 || iph->version != 4 || ip_fast_csum((unsigned char *)iph, iph->ihl) !=0)
+	if (skb->len<sizeof(struct iphdr) || iph->ihl<5 || iph->version != 4 ||
+		skb->len<ntohs(iph->tot_len) || ip_fast_csum((unsigned char *)iph, iph->ihl) !=0)
 	{
 		ip_statistics.IpInHdrErrors++;
 		kfree_skb(skb, FREE_WRITE);
@@ -1500,7 +1503,7 @@ int ip_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 
 #ifdef	CONFIG_IP_FIREWALL
 	
-	if ((err=ip_fw_chk(iph,dev,ip_fw_blk_chain,ip_fw_blk_policy))!=1)
+	if ((err=ip_fw_chk(iph,dev,ip_fw_blk_chain,ip_fw_blk_policy, 0))!=1)
 	{
 		if(err==-1)
 			icmp_send(skb, ICMP_DEST_UNREACH, ICMP_PORT_UNREACH, 0, dev);
@@ -1817,6 +1820,12 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 	skb->ip_hdr = iph;
 	iph->tot_len = ntohs(skb->len-dev->hard_header_len);
 
+#ifdef CONFIG_IP_FIREWALL
+	if(ip_fw_chk(iph, dev, ip_fw_blk_chain, ip_fw_blk_policy, 0) != 1)
+		/* just don't send this packet */
+		return;
+#endif	
+
 	/*
 	 *	No reassigning numbers to fragments...
 	 */
@@ -2082,8 +2091,6 @@ int ip_setsockopt(struct sock *sk, int level, int optname, char *optval, int opt
 			unsigned char ucval;
 
 			ucval=get_fs_byte((unsigned char *)optval);
-			if(ucval<1||ucval>255)
-                                return -EINVAL;
 			sk->ip_mc_ttl=(int)ucval;
 	                return 0;
 		}

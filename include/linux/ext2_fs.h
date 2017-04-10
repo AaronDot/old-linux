@@ -1,9 +1,10 @@
 /*
  *  linux/include/linux/ext2_fs.h
  *
- *  Copyright (C) 1992, 1993, 1994  Remy Card (card@masi.ibp.fr)
- *                                  Laboratoire MASI - Institut Blaise Pascal
- *                                  Universite Pierre et Marie Curie (Paris VI)
+ * Copyright (C) 1992, 1993, 1994, 1995
+ * Remy Card (card@masi.ibp.fr)
+ * Laboratoire MASI - Institut Blaise Pascal
+ * Universite Pierre et Marie Curie (Paris VI)
  *
  *  from
  *
@@ -14,6 +15,8 @@
 
 #ifndef _LINUX_EXT2_FS_H
 #define _LINUX_EXT2_FS_H
+
+#include <linux/types.h>
 
 /*
  * The second extended filesystem constants/structures
@@ -47,7 +50,7 @@
 /*
  * The second extended file system version
  */
-#define EXT2FS_DATE		"94/10/23"
+#define EXT2FS_DATE		"95/03/19"
 #define EXT2FS_VERSION		"0.5a"
 
 /*

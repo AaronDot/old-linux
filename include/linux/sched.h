@@ -47,6 +47,8 @@ extern unsigned long avenrun[];		/* Load averages */
 #define CT_TO_SECS(x)	((x) / HZ)
 #define CT_TO_USECS(x)	(((x) % HZ) * 1000000/HZ)
 
+extern int nr_running, nr_tasks;
+
 #define FIRST_TASK task[0]
 #define LAST_TASK task[NR_TASKS-1]
 
@@ -74,6 +76,8 @@ extern unsigned long avenrun[];		/* Load averages */
 #endif
 
 #ifdef __KERNEL__
+
+#define barrier() __asm__("": : :"memory")
 
 extern void sched_init(void);
 extern void show_state(void);
@@ -198,6 +202,9 @@ struct task_struct {
 					/* Not implemented yet, only for 486*/
 #define PF_PTRACED	0x00000010	/* set if ptrace (0) has been called. */
 #define PF_TRACESYS	0x00000020	/* tracing system calls */
+
+#define PF_STARTING	0x00000100	/* being created */
+#define PF_EXITING	0x00000200	/* getting shut down */
 
 /*
  * cloning flags:

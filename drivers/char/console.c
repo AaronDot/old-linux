@@ -1005,6 +1005,7 @@ void invert_screen(int currcons, int offset, int count, int viewed)
 			unsigned short old = scr_readw(p);
 			scr_writew(old ^ (((old & 0x0700) == 0x0100)
 					  ? 0x7000 : 0x7700), p);
+			p++;
 		}
 }
 
@@ -1685,11 +1686,8 @@ static int con_write(struct tty_struct * tty, int from_user,
 				  case '@':  /* defined in ISO 2022 */
 					utf = 0;
 					continue;
-				  case '8':
-					/* ISO/ECMA hasn't yet registered an
-					   official ESC sequence for UTF-8,
-					   so this one (ESC %8) will likely
-					   change in the future. */
+				  case 'G':  /* prelim official escape code */
+				  case '8':  /* retained for compatibility */
 					utf = 1;
 					continue;
 				}

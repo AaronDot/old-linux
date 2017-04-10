@@ -1,4 +1,3 @@
-#define THREE_LEVEL
 /*
  *  linux/mm/swap.c
  *
@@ -340,12 +339,13 @@ static inline int try_to_swap_out(struct vm_area_struct* vma, unsigned long addr
 	if (pte_dirty(pte)) {
 		if (mem_map[MAP_NR(page)] != 1)
 			return 0;
-		vma->vm_task->mm->rss--;
-		if (vma->vm_ops && vma->vm_ops->swapout)
+		if (vma->vm_ops && vma->vm_ops->swapout) {
+			vma->vm_task->mm->rss--;
 			vma->vm_ops->swapout(vma, address-vma->vm_start, page_table);
-		else {
+		} else {
 			if (!(entry = get_swap_page()))
 				return 0;
+			vma->vm_task->mm->rss--;
 			pte_val(*page_table) = entry;
 			invalidate();
 			write_swap_page(entry, (char *) page);
@@ -467,6 +467,11 @@ static int swap_out_vma(struct vm_area_struct * vma, pgd_t *pgdir,
 {
 	unsigned long end;
 
+	/* Don't swap out areas like shared memory which have their
+	    own separate swapping mechanism. */
+	if (vma->vm_flags & VM_SHM)
+		return 0;
+
 	end = vma->vm_end;
 	while (start < end) {
 		int result = swap_out_pgd(vma, pgdir, start, end);
@@ -517,7 +522,7 @@ static int swap_out(unsigned int priority)
 	int loop, counter;
 	struct task_struct *p;
 
-	counter = 2*NR_TASKS >> priority;
+	counter = 6*nr_tasks >> priority;
 	for(; counter >= 0; counter--) {
 		/*
 		 * Check that swap_task is suitable for swapping.  If not, look for
@@ -599,7 +604,7 @@ static int try_to_free_page(int priority)
 			if (swap_out(i))
 				return 1;
 			state = 0;
-		} while(--i);
+		} while(i--);
 	}
 	return 0;
 }
