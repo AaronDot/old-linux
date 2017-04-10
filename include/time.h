@@ -11,6 +11,10 @@ typedef long time_t;
 typedef unsigned int size_t;
 #endif
 
+#ifndef NULL
+#define NULL ((void *) 0)
+#endif
+
 #define CLOCKS_PER_SEC 100
 
 typedef long clock_t;
@@ -26,6 +30,9 @@ struct tm {
 	int tm_yday;
 	int tm_isdst;
 };
+
+#define	__isleap(year)	\
+  ((year) % 4 == 0 && ((year) % 100 != 0 || (year) % 1000 == 0))
 
 clock_t clock(void);
 time_t time(time_t * tp);
