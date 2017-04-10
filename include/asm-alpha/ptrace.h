@@ -46,8 +46,25 @@ struct pt_regs {
 	unsigned long r18;
 };
 
+/*
+ * This is the extended stack used by signal handlers and the context
+ * switcher: it's pushed after the normal "struct pt_regs".
+ */
+struct switch_stack {
+	unsigned long r9;
+	unsigned long r10;
+	unsigned long r11;
+	unsigned long r12;
+	unsigned long r13;
+	unsigned long r14;
+	unsigned long r15;
+	unsigned long r26;
+	unsigned long fp[32];	/* fp[31] is fpcr */
+};
+
 #ifdef __KERNEL__
 #define user_mode(regs) ((regs)->ps & 8)
+#define instruction_pointer(regs) ((regs)->pc)
 extern void show_regs(struct pt_regs *);
 #endif
 

@@ -18,7 +18,7 @@
  * 	This routine is called when a particular tty device is closed.
  *
  * int (*write)(struct tty_struct * tty, int from_user,
- * 		 unsigned char *buf, int count);
+ * 		 const unsigned char *buf, int count);
  *
  * 	This routine is called by the kernel to write a series of
  * 	characters to the tty device.  The characters may come from
@@ -98,7 +98,7 @@
 
 struct tty_driver {
 	int	magic;		/* magic number for this structure */
-	char	*name;
+	const char	*name;
 	int	name_base;	/* offset of printed name */
 	short	major;		/* major device number */
 	short	minor_start;	/* start of minor device number*/
@@ -124,7 +124,7 @@ struct tty_driver {
 	int  (*open)(struct tty_struct * tty, struct file * filp);
 	void (*close)(struct tty_struct * tty, struct file * filp);
 	int  (*write)(struct tty_struct * tty, int from_user,
-		      unsigned char *buf, int count);
+		      const unsigned char *buf, int count);
 	void (*put_char)(struct tty_struct *tty, unsigned char ch);
 	void (*flush_chars)(struct tty_struct *tty);
 	int  (*write_room)(struct tty_struct *tty);
@@ -176,6 +176,7 @@ struct tty_driver {
 #define TTY_DRIVER_TYPE_CONSOLE		0x0002
 #define TTY_DRIVER_TYPE_SERIAL		0x0003
 #define TTY_DRIVER_TYPE_PTY		0x0004
+#define TTY_DRIVER_TYPE_SCC		0x0005	/* scc driver */
 
 /* system subtypes (magic, used by tty_io.c) */
 #define SYSTEM_TYPE_TTY			0x0001

@@ -1,20 +1,15 @@
 #ifndef _ALPHA_TYPES_H
 #define _ALPHA_TYPES_H
 
-#ifndef _SIZE_T
-#define _SIZE_T
-typedef unsigned long size_t;
-#endif
+/*
+ * This file is never included by application software unless
+ * explicitly requested (e.g., via linux/types.h) in which case the
+ * application is Linux specific so (user-) name space pollution is
+ * not a major issue.  However, for interoperability, libraries still
+ * need to be careful to avoid a name clashes.
+ */
 
-#ifndef _SSIZE_T
-#define _SSIZE_T
-typedef long ssize_t;
-#endif
-
-#ifndef _PTRDIFF_T
-#define _PTRDIFF_T
-typedef long ptrdiff_t;
-#endif
+typedef unsigned int umode_t;
 
 /*
  * __xx is ok: it doesn't pollute the POSIX namespace. Use these in the
@@ -77,5 +72,4 @@ typedef unsigned long u64;
 #endif
 
 #endif /* __KERNEL__ */
-
-#endif
+#endif /* _ALPHA_TYPES_H */

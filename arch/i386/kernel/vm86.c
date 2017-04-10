@@ -74,7 +74,7 @@ static void mark_screen_rdonly(struct task_struct * tsk)
 	pte_t *pte;
 	int i;
 
-	pgd = pgd_offset(tsk, 0xA0000);
+	pgd = pgd_offset(tsk->mm, 0xA0000);
 	if (pgd_none(*pgd))
 		return;
 	if (pgd_bad(*pgd)) {
@@ -93,10 +93,10 @@ static void mark_screen_rdonly(struct task_struct * tsk)
 	pte = pte_offset(pmd, 0xA0000);
 	for (i = 0; i < 32; i++) {
 		if (pte_present(*pte))
-			*pte = pte_wrprotect(*pte);
+			set_pte(pte, pte_wrprotect(*pte));
 		pte++;
 	}
-	invalidate();
+	flush_tlb();
 }
 
 asmlinkage int sys_vm86(struct vm86_struct * v86)
@@ -379,6 +379,7 @@ void handle_vm86_fault(struct vm86_regs * regs, long error_code)
 			set_vflags_long(popl(ssp, sp), regs);
 			return;
 		}
+		break;
 
 	/* pushf */
 	case 0x9c:
@@ -425,8 +426,10 @@ void handle_vm86_fault(struct vm86_regs * regs, long error_code)
 		IP(regs)++;
 		set_IF(regs);
 		return;
-
-	default:
-		return_to_32bit(regs, VM86_UNKNOWN);
 	}
+
+	/*
+	 * We didn't recognize it, let the emulator take care of it..
+	 */
+	return_to_32bit(regs, VM86_UNKNOWN);
 }

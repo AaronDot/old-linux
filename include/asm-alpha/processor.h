@@ -10,7 +10,7 @@
 /*
  * We have a 41-bit user address space: 2TB user VM...
  */
-#define TASK_SIZE (0x20000000000UL)
+#define TASK_SIZE (0x40000000000UL)
 
 /*
  * Bus types
@@ -33,11 +33,15 @@ struct thread_struct {
 	unsigned int pcc;
 	unsigned int asn;
 	unsigned long unique;
+	/*
+	 * bit  0.. 0: floating point enable (used by PALcode)
+	 * bit  1.. 5: IEEE_TRAP_ENABLE bits (see fpu.h)
+	 */
 	unsigned long flags;
 	unsigned long res1, res2;
 };
 
-#define INIT_MMAP { &init_task, 0xfffffc0000300000,  0xfffffc0010000000, \
+#define INIT_MMAP { &init_mm, 0xfffffc0000000000,  0xfffffc0010000000, \
 	PAGE_SHARED, VM_READ | VM_WRITE | VM_EXEC }
 
 #define INIT_TSS  { \
@@ -46,35 +50,25 @@ struct thread_struct {
 	0, 0, 0, \
 }
 
-/*
- * These are the "cli()" and "sti()" for software interrupts
- * They work by increasing/decreasing the "intr_count" value, 
- * and as such can be nested arbitrarily.
- */
-extern inline void start_bh_atomic(void)
-{
-	unsigned long dummy;
-	__asm__ __volatile__(
-		"\n1:\t"
-		"ldq_l %0,%1\n\t"
-		"addq %0,1,%0\n\t"
-		"stq_c %0,%1\n\t"
-		"beq %0,1b\n"
-		: "=r" (dummy), "=m" (intr_count)
-		: "0" (0));
-}
+#define alloc_kernel_stack()    get_free_page(GFP_KERNEL)
+#define free_kernel_stack(page) free_page((page))
 
-extern inline void end_bh_atomic(void)
+#include <asm/ptrace.h>
+
+/*
+ * Return saved PC of a blocked thread.  This assumes the frame
+ * pointer is the 6th saved long on the kernel stack and that the
+ * saved return address is the first long in the frame.  This all
+ * holds provided the thread blocked through a call to schedule() ($15
+ * is the frame pointer in schedule() and $15 is saved at offset 48 by
+ * entry.S:do_switch_stack).
+ */
+extern inline unsigned long thread_saved_pc(struct thread_struct *t)
 {
-	unsigned long dummy;
-	__asm__ __volatile__(
-		"\n1:\t"
-		"ldq_l %0,%1\n\t"
-		"subq %0,1,%0\n\t"
-		"stq_c %0,%1\n\t"
-		"beq %0,1b\n"
-		: "=r" (dummy), "=m" (intr_count)
-		: "0" (0));
+	unsigned long fp;
+
+	fp = ((unsigned long*)t->ksp)[6];
+	return *(unsigned long*)fp;
 }
 
 /*
@@ -83,6 +77,7 @@ extern inline void end_bh_atomic(void)
 static inline void start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 {
 	regs->pc = pc;
+	regs->ps = 8;
 	wrusp(sp);
 }
 
