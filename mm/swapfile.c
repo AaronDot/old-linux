@@ -5,6 +5,7 @@
  *  Swap reorganised 29.12.95, Stephen Tweedie
  */
 
+#include <linux/config.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
 #include <linux/head.h>
@@ -16,6 +17,8 @@
 #include <linux/swap.h>
 #include <linux/fs.h>
 #include <linux/swapctl.h>
+#include <linux/blkdev.h> /* for blk_size */
+#include <linux/shm.h>
 
 #include <asm/dma.h>
 #include <asm/system.h> /* for cli()/sti() */
@@ -80,7 +83,9 @@ unsigned long get_swap_page(void)
 
 	type = swap_list.next;
 	if (type < 0)
-	  return 0;
+		return 0;
+	if (nr_swap_pages == 0)
+		return 0;
 
 	while (1) {
 		p = &swap_info[type];
@@ -142,9 +147,10 @@ void swap_free(unsigned long entry)
 	if (offset > p->highest_bit)
 		p->highest_bit = offset;
 	if (!p->swap_map[offset])
-		printk("swap_free: swap-space map bad (entry %08lx)\n",entry);
-	else
-		if (!--p->swap_map[offset])
+		printk("swap_free: swap-space map null (entry %08lx)\n",entry);
+	else if (p->swap_map[offset] == SWAP_MAP_RESERVED)
+		printk("swap_free: swap-space reserved (entry %08lx)\n",entry);
+	else if (!--p->swap_map[offset])
 			nr_swap_pages++;
 	if (p->prio > swap_info[swap_list.next].prio) {
 	    swap_list.next = swap_list.head;
@@ -309,6 +315,9 @@ static int try_to_unuse(unsigned int type)
 		nr++;
 	}
 	free_page(page);
+#ifdef CONFIG_SYSVIPC	
+	shm_unuse(type);
+#endif
 	return 0;
 }
 
@@ -318,12 +327,13 @@ asmlinkage int sys_swapoff(const char * specialfile)
 	struct inode * inode;
 	struct file filp;
 	int i, type, prev;
+	int err;
 
 	if (!suser())
 		return -EPERM;
-	i = namei(specialfile,&inode);
-	if (i)
-		return i;
+	err = namei(specialfile,&inode);
+	if (err)
+		return err;
 	prev = -1;
 	for (type = swap_list.head; type >= 0; type = swap_info[type].next) {
 		p = swap_info + type;
@@ -353,13 +363,21 @@ asmlinkage int sys_swapoff(const char * specialfile)
 		swap_list.next = swap_list.head;
 	}
 	p->flags = SWP_USED;
-	i = try_to_unuse(type);
-	if (i) {
+	err = try_to_unuse(type);
+	if (err) {
 		iput(inode);
+		/* re-insert swap space back into swap_list */
+		for (prev = -1, i = swap_list.head; i >= 0; prev = i, i = swap_info[i].next)
+			if (p->prio >= swap_info[i].prio)
+				break;
+		p->next = i;
+		if (prev < 0)
+			swap_list.head = swap_list.next = p - swap_info;
+		else
+			swap_info[prev].next = p - swap_info;
 		p->flags = SWP_WRITEOK;
-		return i;
+		return err;
 	}
-
 	if(p->swap_device){
 		memset(&filp, 0, sizeof(filp));		
 		filp.f_inode = inode;
@@ -448,7 +466,9 @@ asmlinkage int sys_swapon(const char * specialfile, int swap_flags)
 		if(error)
 			goto bad_swap_2;
 		error = -ENODEV;
-		if (!p->swap_device)
+		if (!p->swap_device ||
+		    (blk_size[MAJOR(p->swap_device)] &&
+		     !blk_size[MAJOR(p->swap_device)][MINOR(p->swap_device)]))
 			goto bad_swap;
 		error = -EBUSY;
 		for (i = 0 ; i < nr_swapfiles ; i++) {
@@ -489,7 +509,7 @@ asmlinkage int sys_swapon(const char * specialfile, int swap_flags)
 		error = -EINVAL;
 		goto bad_swap;
 	}
-	p->swap_map = (unsigned char *) vmalloc(p->max);
+	p->swap_map = (unsigned short *) vmalloc(p->max * sizeof(short));
 	if (!p->swap_map) {
 		error = -ENOMEM;
 		goto bad_swap;
@@ -498,14 +518,15 @@ asmlinkage int sys_swapon(const char * specialfile, int swap_flags)
 		if (test_bit(i,p->swap_lockmap))
 			p->swap_map[i] = 0;
 		else
-			p->swap_map[i] = 0x80;
+			p->swap_map[i] = SWAP_MAP_RESERVED;
 	}
-	p->swap_map[0] = 0x80;
+	p->swap_map[0] = SWAP_MAP_RESERVED;
 	memset(p->swap_lockmap,0,PAGE_SIZE);
 	p->flags = SWP_WRITEOK;
 	p->pages = j;
 	nr_swap_pages += j;
-	printk("Adding Swap: %dk swap-space\n",j<<(PAGE_SHIFT-10));
+	printk("Adding Swap: %dk swap-space (priority %d)\n",
+	       j<<(PAGE_SHIFT-10), p->prio);
 
 	/* insert swap space into swap_list: */
 	prev = -1;
@@ -547,7 +568,7 @@ void si_swapinfo(struct sysinfo *val)
 			continue;
 		for (j = 0; j < swap_info[i].max; ++j)
 			switch (swap_info[i].swap_map[j]) {
-				case 128:
+				case SWAP_MAP_RESERVED:
 					continue;
 				case 0:
 					++val->freeswap;

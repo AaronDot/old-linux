@@ -164,7 +164,7 @@ typedef struct {
 } Signature;
 	
 static const Signature signatures[] = {
-#ifdef CONFIG_SCSI_SEAGATE
+#if defined(CONFIG_SCSI_SEAGATE) || defined(CONFIG_SCSI_SEAGATE_MODULE)
 {"ST01 v1.7  (C) Copyright 1987 Seagate", 15, 37, SEAGATE},
 {"SCSI BIOS 2.00  (C) Copyright 1987 Seagate", 15, 40, SEAGATE},
 
@@ -689,7 +689,7 @@ static int internal_command(unsigned char target, unsigned char lun, const void 
 		return DID_BAD_TARGET;
 
 /*
- *	We work it differently depending on if this is is "the first time,"
+ *	We work it differently depending on if this is "the first time,"
  *	or a reconnect.  If this is a reselect phase, then SEL will 
  *	be asserted, and we must skip selection / arbitration phases.
  */
@@ -924,7 +924,7 @@ connect_loop :
 			if (STATUS & STAT_BSY) {
 				printk("scsi%d : BST asserted after we've been aborted.\n",
 					hostno);
-				seagate_st0x_reset(NULL);
+				seagate_st0x_reset(NULL, 0);
 				return retcode(DID_RESET);
 			}
 			return retcode(st0x_aborted);
@@ -1597,7 +1597,7 @@ int seagate_st0x_abort (Scsi_Cmnd * SCpnt)
 	the seagate_st0x_reset function resets the SCSI bus
 */
 	
-int seagate_st0x_reset (Scsi_Cmnd * SCpnt)
+int seagate_st0x_reset (Scsi_Cmnd * SCpnt, unsigned int reset_flags)
 	{
 	unsigned clock;
 	/*

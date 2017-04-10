@@ -2,10 +2,9 @@
  * This program is used to generate definitions needed by
  * assembly language modules.
  */
-
+#define MK_DEFS
 #include <stdio.h> 
 
-#include <linux/config.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/head.h>
@@ -28,7 +27,7 @@ main(int argc, char *argv[])
 	struct pt_regs regs;
 	if (!(out = fopen(argv[1], "w")))
 	{
-		fprintf(stderr, "Can't create output file: %d\n", errno);
+		fprintf(stderr, "Can't create output file: %s\n", strerror(errno));
 		exit(1);
 	}
 	fprintf(out, "/*\n");
@@ -42,6 +41,10 @@ main(int argc, char *argv[])
 	put_line(out, "TSS", (int)&task.tss-(int)&task);
 	put_line(out, "KSP", (int)&tss.ksp-(int)&tss);
 	put_line(out, "LAST_PC", (int)&tss.last_pc-(int)&tss);
+	put_line(out, "USER_STACK", (int)&tss.user_stack-(int)&tss);
+	put_line(out, "PT_REGS", (int)&tss.regs-(int)&tss);
+	put_line(out, "PF_TRACESYS", PF_TRACESYS);
+	put_line(out, "TASK_FLAGS", (int)&task.flags-(int)&task);
 	put_line(out, "MMU_SEG0", (int)&tss.segs[0]-(int)&tss);
 	put_line(out, "MMU_SEG1", (int)&tss.segs[1]-(int)&tss);
 	put_line(out, "MMU_SEG2", (int)&tss.segs[2]-(int)&tss);

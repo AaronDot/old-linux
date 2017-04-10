@@ -25,7 +25,7 @@
 /* serial module kerneld load support */
 struct tty_driver *get_tty_driver(kdev_t device);
 #define isa_tty_dev(ma)	(ma == TTY_MAJOR || ma == TTYAUX_MAJOR)
-#define need_serial(ma,mi) (get_tty_driver(to_kdev_t(MKDEV(ma,mi))) == NULL)
+#define need_serial(ma,mi) (get_tty_driver(MKDEV(ma,mi)) == NULL)
 #endif
 
 struct device_struct {
@@ -227,6 +227,10 @@ int check_disk_change(kdev_t dev)
 int blkdev_open(struct inode * inode, struct file * filp)
 {
 	int ret = -ENODEV;
+
+	if (securelevel > 0 && (filp->f_mode & FMODE_WRITE))
+		return -EACCES; /* cevans */
+
 	filp->f_op = get_blkfops(MAJOR(inode->i_rdev));
 	if (filp->f_op != NULL){
 		ret = 0;

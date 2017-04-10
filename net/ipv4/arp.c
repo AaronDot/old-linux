@@ -4,14 +4,15 @@
  *
  * This module implements the Address Resolution Protocol ARP (RFC 826),
  * which is used to convert IP addresses (or in the future maybe other
- * high-level addresses into a low-level hardware address (like an Ethernet
+ * high-level addresses) into a low-level hardware address (like an Ethernet
  * address).
  *
  * FIXME:
  *	Experiment with better retransmit timers
  *	Clean up the timer deletions
- *	If you create a proxy entry set your interface address to the address
- *	and then delete it, proxies may get out of sync with reality - check this
+ *	If you create a proxy entry, set your interface address to the address
+ *	and then delete it, proxies may get out of sync with reality - 
+ *	check this.
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -19,11 +20,12 @@
  * 2 of the License, or (at your option) any later version.
  *
  * Fixes:
- *		Alan Cox	:	Removed the ethernet assumptions in Florian's code
- *		Alan Cox	:	Fixed some small errors in the ARP logic
+ *		Alan Cox	:	Removed the ethernet assumptions in 
+ *					Florian's code
+ *		Alan Cox	:	Fixed some small errors in the ARP 
+ *					logic
  *		Alan Cox	:	Allow >4K in /proc
  *		Alan Cox	:	Make ARP add its own protocol entry
- *
  *		Ross Martin     :       Rewrote arp_rcv() and arp_get_info()
  *		Stephen Henson	:	Add AX25 support to arp_get_info()
  *		Alan Cox	:	Drop data when a device is downed.
@@ -46,7 +48,8 @@
  *					during arp_rcv.
  *		Russ Nelson	:	Tidied up a few bits.
  *		Alexey Kuznetsov:	Major changes to caching and behaviour,
- *					eg intelligent arp probing and generation
+ *					eg intelligent arp probing and 
+ *					generation
  *					of host down events.
  *		Alan Cox	:	Missing unlock in device events.
  *		Eckes		:	ARP ioctl control errors.
@@ -54,12 +57,17 @@
  *		Manuel Rodriguez:	Gratuitous ARP.
  *              Jonathan Layes  :       Added arpd support through kerneld 
  *                                      message queue (960314)
+ *		Mike Shaver	:	/proc/sys/net/ipv4/arp_* support
+ *		Stuart Cheshire	:	Metricom and grat arp fixes
+ *					*** FOR 2.1 clean this up ***
+ *		Lawrence V. Stefani: (08/12/96) Added FDDI support.
+ *		David S. Miller	:	Fix skb leakage in arp_find.
  */
 
 /* RFC1122 Status:
    2.3.2.1 (ARP Cache Validation):
      MUST provide mechanism to flush stale cache entries (OK)
-     SHOULD be able to configure cache timeout (NOT YET)
+     SHOULD be able to configure cache timeout (OK)
      MUST throttle ARP retransmits (OK)
    2.3.2.2 (ARP Packet Queue):
      SHOULD save at least one packet from each "conversation" with an
@@ -80,6 +88,7 @@
 #include <linux/inet.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/fddidevice.h>
 #include <linux/if_arp.h>
 #include <linux/trdevice.h>
 #include <linux/skbuff.h>
@@ -93,9 +102,9 @@
 #include <net/tcp.h>
 #include <net/sock.h>
 #include <net/arp.h>
-#ifdef CONFIG_AX25
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
 #include <net/ax25.h>
-#ifdef CONFIG_NETROM
+#if defined(CONFIG_NETROM) || defined(CONFIG_NETROM_MODULE)
 #include <net/netrom.h>
 #endif
 #endif
@@ -121,12 +130,9 @@
  *	and dynamic routing.
  */
 
-#ifndef CONFIG_ARPD
-#define ARP_TIMEOUT		(600*HZ)
-#else
 #define ARP_TIMEOUT		(60*HZ)
-#define ARPD_TIMEOUT		(600*HZ)
-#endif
+
+int sysctl_arp_timeout = ARP_TIMEOUT;
 
 /*
  *	How often is ARP cache checked for expire.
@@ -135,11 +141,13 @@
 
 #define ARP_CHECK_INTERVAL	(60*HZ)
 
+int sysctl_arp_check_interval = ARP_CHECK_INTERVAL;
+
 /*
  *	Soft limit on ARP cache size.
- *	Note that this number should be greater, than
- *	number of simultaneously opened sockets, else
- *	hardware header cache will be not efficient.
+ *	Note that this number should be greater than
+ *	number of simultaneously opened sockets, or else
+ *	hardware header cache will not be efficient.
  */
 
 #if RT_CACHE_DEBUG >= 2
@@ -162,12 +170,16 @@
 
 #define ARP_RES_TIME		(5*HZ)
 
+int sysctl_arp_res_time = ARP_RES_TIME;
+
 /*
  *	The number of times an broadcast arp request is send, until
  *	the host is considered temporarily unreachable.
  */
 
 #define ARP_MAX_TRIES		3
+
+int sysctl_arp_max_tries = ARP_MAX_TRIES;
 
 /*
  *	The entry is reconfirmed by sending point-to-point ARP
@@ -183,11 +195,15 @@
 
 #define ARP_CONFIRM_INTERVAL	(300*HZ)
 
+int sysctl_arp_confirm_interval = ARP_CONFIRM_INTERVAL;
+
 /*
  *	We wait for answer to unicast request for ARP_CONFIRM_TIMEOUT.
  */
 
 #define ARP_CONFIRM_TIMEOUT	ARP_RES_TIME
+
+int sysctl_arp_confirm_timeout = ARP_CONFIRM_TIMEOUT;
 
 /*
  *	The number of times an unicast arp request is retried, until
@@ -197,6 +213,8 @@
  */
 
 #define ARP_MAX_PINGS		1
+
+int sysctl_arp_max_pings = ARP_MAX_PINGS;
 
 /*
  *	When a host is dead, but someone tries to connect it,
@@ -210,6 +228,8 @@
  */
 
 #define ARP_DEAD_RES_TIME	(60*HZ)
+
+int sysctl_arp_dead_res_time = ARP_DEAD_RES_TIME;
 
 /*
  *	This structure defines the ARP mapping cache.
@@ -262,7 +282,7 @@ static struct arp_table *arp_req_backlog;
 static void arp_run_bh(void);
 static void arp_check_expire (unsigned long);  
 static int  arp_update (u32 sip, char *sha, struct device * dev,
-	    struct arp_table *ientry, int grat);
+	    unsigned long updated, struct arp_table *ientry, int grat);
 
 static struct timer_list arp_timer =
 	{ NULL, NULL, ARP_CHECK_INTERVAL, 0L, &arp_check_expire };
@@ -680,17 +700,8 @@ static int arpd_callback(struct sk_buff *skb)
 	else
 	{
 		arp_fast_lock();
-		arp_update(retreq->ip, retreq->ha, dev, NULL, 0);
+		arp_update(retreq->ip, retreq->ha, dev, retreq->updated, NULL, 0);
 		arp_unlock();
-
-/*
- *	Old mapping: we cannot trust it, send ARP broadcast to confirm it.
- *	If it will answer, the entry will be updated,
- *	if not ... we are lost. We will use it for ARP_CONFIRM_INTERVAL.
- */
-		if (jiffies - retreq->updated < ARPD_TIMEOUT)
-			arp_send(ARPOP_REQUEST, ETH_P_ARP, retreq->ip, dev, dev->pa_addr, NULL, 
-				 dev->dev_addr, NULL);
 	}
 
 	kfree_skb(skb, FREE_READ);
@@ -728,7 +739,7 @@ static int arp_force_expire(void)
 	unsigned long now = jiffies;
 	int result = 0;
 
-	static last_index;
+	static int last_index;
 
 	if (ARP_LOCKED())
 		return 0;
@@ -750,7 +761,7 @@ static int arp_force_expire(void)
 				cli();
 				users = arp_count_hhs(entry);
 
-				if (!users && now - entry->last_used > ARP_TIMEOUT)
+				if (!users && now - entry->last_used > sysctl_arp_timeout)
 				{
 					*pentry = entry->next;
 					restore_flags(flags);
@@ -788,9 +799,9 @@ done:
 }
 
 /*
- *	Check if there are too old entries and remove them. If the ATF_PERM
- *	flag is set, they are always left in the arp cache (permanent entry).
- *      If an entry was not be confirmed  for ARP_CONFIRM_INTERVAL,
+ *	Check if there are entries that are too old and remove them. If the
+ *	ATF_PERM flag is set, they are always left in the arp cache (permanent
+ *      entries). If an entry was not confirmed for ARP_CONFIRM_INTERVAL,
  *	send point-to-point ARP request.
  *	If it will not be confirmed for ARP_CONFIRM_TIMEOUT,
  *	give it to shred by arp_expire_entry.
@@ -829,7 +840,7 @@ static void arp_check_expire(unsigned long dummy)
 				}
 
 				cli();
-				if (now - entry->last_used > ARP_TIMEOUT
+				if (now - entry->last_used > sysctl_arp_timeout
 				    && !arp_count_hhs(entry))
 				{
 					*pentry = entry->next;
@@ -842,11 +853,11 @@ static void arp_check_expire(unsigned long dummy)
 				}
 				sti();
 				if (entry->last_updated
-				    && now - entry->last_updated > ARP_CONFIRM_INTERVAL
+				    && now - entry->last_updated > sysctl_arp_confirm_interval
 				    && !(entry->flags & ATF_PERM))
 				{
 					struct device * dev = entry->dev;
-					entry->retries = ARP_MAX_TRIES+ARP_MAX_PINGS;
+					entry->retries = sysctl_arp_max_tries+sysctl_arp_max_pings;
 					del_timer(&entry->timer);
 					entry->timer.expires = jiffies + ARP_CONFIRM_TIMEOUT;
 					add_timer(&entry->timer);
@@ -868,7 +879,7 @@ static void arp_check_expire(unsigned long dummy)
 	 *	Set the timer again.
 	 */
 
-	arp_timer.expires = jiffies + ARP_CHECK_INTERVAL;
+	arp_timer.expires = jiffies + sysctl_arp_check_interval;
 	add_timer(&arp_timer);
 }
 
@@ -918,7 +929,7 @@ static void arp_expire_request (unsigned long arg)
 	 */
 	
 	if ((entry->flags & ATF_COM) && entry->last_updated
-	    && jiffies - entry->last_updated <= ARP_CONFIRM_INTERVAL)
+	    && jiffies - entry->last_updated <= sysctl_arp_confirm_interval)
 	{
 		restore_flags(flags);
 		arp_unlock();
@@ -935,10 +946,10 @@ static void arp_expire_request (unsigned long arg)
 		printk("arp_expire_request: %08x timed out\n", entry->ip);
 #endif
 		/* Set new timer. */
-		entry->timer.expires = jiffies + ARP_RES_TIME;
+		entry->timer.expires = jiffies + sysctl_arp_res_time;
 		add_timer(&entry->timer);
 		arp_send(ARPOP_REQUEST, ETH_P_ARP, entry->ip, dev, dev->pa_addr,
-			 entry->retries > ARP_MAX_TRIES ? entry->ha : NULL,
+			 entry->retries > sysctl_arp_max_tries ? entry->ha : NULL,
 			 dev->dev_addr, NULL);
 		arp_unlock();
 		return;
@@ -965,7 +976,7 @@ static void arp_expire_request (unsigned long arg)
 #if RT_CACHE_DEBUG >= 2
 		printk("arp_expire_request: %08x is dead\n", entry->ip);
 #endif
-		entry->retries = ARP_MAX_TRIES;
+		entry->retries = sysctl_arp_max_tries;
 		entry->flags &= ~ATF_COM;
 		arp_invalidate_hhs(entry);
 		restore_flags(flags);
@@ -976,7 +987,7 @@ static void arp_expire_request (unsigned long arg)
 		entry->last_updated = 0;
 		arpd_update(entry);
 
-		entry->timer.expires = jiffies + ARP_DEAD_RES_TIME;
+		entry->timer.expires = jiffies + sysctl_arp_dead_res_time;
 		add_timer(&entry->timer);
 		arp_send(ARPOP_REQUEST, ETH_P_ARP, entry->ip, dev, dev->pa_addr, 
 			 NULL, dev->dev_addr, NULL);
@@ -1105,7 +1116,7 @@ static void arp_send_q(struct arp_table *entry)
 	
 	if(!(entry->flags&ATF_COM))
 	{
-		printk("arp_send_q: incomplete entry for %s\n",
+		printk(KERN_ERR "arp_send_q: incomplete entry for %s\n",
 				in_ntoa(entry->ip));
 		/* Can't flush the skb, because RFC1122 says to hang on to */
 		/* at least one from any unresolved entry.  --MS */
@@ -1130,6 +1141,7 @@ static void arp_send_q(struct arp_table *entry)
 			else
 				dev_queue_xmit(skb,skb->dev,skb->sk->priority);
 		}
+		cli();
 	}
 	restore_flags(flags);
 }
@@ -1137,10 +1149,17 @@ static void arp_send_q(struct arp_table *entry)
 
 static int
 arp_update (u32 sip, char *sha, struct device * dev,
-	    struct arp_table *ientry, int grat)
+	    unsigned long updated, struct arp_table *ientry, int grat)
 {
 	struct arp_table * entry;
 	unsigned long hash;
+	int do_arpd = 0;
+
+	if (updated == 0)
+	{
+		updated = jiffies;
+		do_arpd = 1;
+	}
 
 	hash = HASH(sip);
 
@@ -1156,14 +1175,15 @@ arp_update (u32 sip, char *sha, struct device * dev,
 		if (!(entry->flags & ATF_PERM)) 
 		{
 			del_timer(&entry->timer);
-			entry->last_updated = jiffies;
+			entry->last_updated = updated;
 			if (memcmp(entry->ha, sha, dev->addr_len)!=0)
 			{
 				memcpy(entry->ha, sha, dev->addr_len);
 				if (entry->flags & ATF_COM)
 					arp_update_hhs(entry);
 			}
-			arpd_update(entry);
+			if (do_arpd)
+				arpd_update(entry);
 		}
 
 		if (!(entry->flags & ATF_COM))
@@ -1204,8 +1224,10 @@ arp_update (u32 sip, char *sha, struct device * dev,
 		entry->dev = dev;
 	}
 
-	entry->last_updated = entry->last_used = jiffies;
-	arpd_update(entry);
+	entry->last_updated = updated;
+	entry->last_used = jiffies;
+	if (do_arpd)
+		arpd_update(entry);
 
 	if (!ARP_LOCKED())
 	{
@@ -1270,7 +1292,8 @@ static int arp_set_predefined(int addr_hint, unsigned char * haddr, u32 paddr, s
 			return 1;
 #ifdef CONFIG_IP_MULTICAST
 		case IS_MULTICAST:
-			if(dev->type==ARPHRD_ETHER || dev->type==ARPHRD_IEEE802)
+			if(dev->type==ARPHRD_ETHER || dev->type==ARPHRD_IEEE802 
+				|| dev->type==ARPHRD_FDDI)
 			{
 				u32 taddr;
 				haddr[0]=0x01;
@@ -1316,7 +1339,7 @@ struct arp_table * arp_new_entry(u32 paddr, struct device *dev, struct hh_cache 
 			atomic_inc(&hh->hh_refcnt);
 			hh->hh_arp = (void*)entry;
 		}
-		entry->timer.expires = jiffies + ARP_RES_TIME;
+		entry->timer.expires = jiffies + sysctl_arp_res_time;
 
 		if (skb != NULL)
 		{
@@ -1330,7 +1353,7 @@ struct arp_table * arp_new_entry(u32 paddr, struct device *dev, struct hh_cache 
 			entry->next = arp_tables[hash];
 			arp_tables[hash] = entry;
 			add_timer(&entry->timer);
-			entry->retries = ARP_MAX_TRIES;
+			entry->retries = sysctl_arp_max_tries;
 #ifdef CONFIG_ARPD
 			if (!arpd_not_running)
 				arpd_lookup(paddr, dev);
@@ -1390,7 +1413,7 @@ int arp_find(unsigned char *haddr, u32 paddr, struct device *dev,
 		}
 
 		/*
-		 *	A request was already send, but no reply yet. Thus
+		 *	A request was already sent, but no reply yet. Thus
 		 *	queue the packet with the previous attempt
 		 */
 			
@@ -1407,7 +1430,8 @@ int arp_find(unsigned char *haddr, u32 paddr, struct device *dev,
 			 */
 			else
 			{
-				icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, dev);
+				icmp_send(skb, ICMP_DEST_UNREACH, ICMP_HOST_UNREACH, 0, dev, 1);
+				skb_device_unlock(skb); /* else it is lost forever */
 				dev_kfree_skb(skb, FREE_WRITE);
 			}
 		}
@@ -1417,8 +1441,10 @@ int arp_find(unsigned char *haddr, u32 paddr, struct device *dev,
 
 	entry = arp_new_entry(paddr, dev, NULL, skb);
 
-	if (skb != NULL && !entry)
+	if (skb != NULL && !entry) {
+		skb_device_unlock(skb); /* else it is lost forever */
 		dev_kfree_skb(skb, FREE_WRITE);
+	}
 
 	arp_unlock();
 	return 1;
@@ -1548,7 +1574,7 @@ static void arp_run_bh()
 		while ((entry = arp_dequeue(&arp_backlog)) != NULL)
 		{
 			restore_flags(flags);
-			if (arp_update(entry->ip, entry->ha, entry->dev, entry, 0))
+			if (arp_update(entry->ip, entry->ha, entry->dev, 0, entry, 0))
 				arp_free_entry(entry);
 			cli();
 		}
@@ -1572,8 +1598,8 @@ static void arp_run_bh()
 				entry->next = arp_tables[hash];
 				arp_tables[hash] = entry;
 				restore_flags(flags);
-				entry->timer.expires = jiffies + ARP_RES_TIME;
-				entry->retries = ARP_MAX_TRIES;
+				entry->timer.expires = jiffies + sysctl_arp_res_time;
+				entry->retries = sysctl_arp_max_tries;
 				entry->last_used = jiffies;
 				if (!(entry->flags & ATF_COM))
 				{
@@ -1670,7 +1696,7 @@ void arp_send(int type, int ptype, u32 dest_ip,
 				+ dev->hard_header_len, GFP_ATOMIC);
 	if (skb == NULL)
 	{
-		printk("ARP: no memory to send an arp packet\n");
+		printk(KERN_DEBUG "ARP: no memory to send an arp packet\n");
 		return;
 	}
 	skb_reserve(skb, dev->hard_header_len);
@@ -1678,18 +1704,30 @@ void arp_send(int type, int ptype, u32 dest_ip,
 	skb->arp = 1;
 	skb->dev = dev;
 	skb->free = 1;
-	skb->protocol = htons (ETH_P_IP);
+	skb->protocol = htons (ETH_P_ARP);
 
 	/*
 	 *	Fill the device header for the ARP frame
 	 */
-
 	dev->hard_header(skb,dev,ptype,dest_hw?dest_hw:dev->broadcast,src_hw?src_hw:NULL,skb->len);
 
-	/* Fill out the arp protocol part. */
+	/*
+	 * Fill out the arp protocol part.
+	 *
+	 * The arp hardware type should match the device type, except for FDDI,
+	 * which (according to RFC 1390) should always equal 1 (Ethernet).
+	 */
+#ifdef CONFIG_FDDI
+	arp->ar_hrd = (dev->type == ARPHRD_FDDI) ? htons(ARPHRD_ETHER) : htons(dev->type);
+#else
 	arp->ar_hrd = htons(dev->type);
-#ifdef CONFIG_AX25
-#ifdef CONFIG_NETROM
+#endif
+	/*
+	 *	Exceptions everywhere. AX.25 uses the AX.25 PID value not the
+	 *	DIX code for the protocol. Make these device structure fields.
+	 */
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
+#if defined(CONFIG_NETROM) || defined(CONFIG_NETROM_MODULE)
 	arp->ar_pro = (dev->type == ARPHRD_AX25 || dev->type == ARPHRD_NETROM) ? htons(AX25_P_IP) : htons(ETH_P_IP);
 #else
 	arp->ar_pro = (dev->type != ARPHRD_AX25) ? htons(ETH_P_IP) : htons(AX25_P_IP);
@@ -1732,6 +1770,12 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 	unsigned char *arp_ptr= (unsigned char *)(arp+1);
 	unsigned char *sha,*tha;
 	u32 sip,tip;
+
+	if(skb->pkt_type == PACKET_OTHERHOST)
+	{
+		kfree_skb(skb, FREE_READ);
+		return 0;
+	}
 	
 /*
  *	The hardware length of the packet should match the hardware length
@@ -1740,16 +1784,57 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
  *	is not from an IP number.  We can't currently handle this, so toss
  *	it. 
  */  
+#if defined(CONFIG_NET_ETHERNET) || defined(CONFIG_FDDI)
+	if (dev->type == ARPHRD_ETHER || dev->type == ARPHRD_FDDI)
+	{
+		/*
+		 * According to RFC 1390, FDDI devices should accept ARP hardware types
+		 * of 1 (Ethernet).  However, to be more robust, we'll accept hardware
+		 * types of either 1 (Ethernet) or 6 (IEEE 802.2).
+		 *
+		 * ETHERNET devices will accept both hardware types, too. (RFC 1042)
+		 */
+		if (arp->ar_hln != dev->addr_len    || 
+			((ntohs(arp->ar_hrd) != ARPHRD_ETHER) && (ntohs(arp->ar_hrd) != ARPHRD_IEEE802)) ||
+			dev->flags & IFF_NOARP          ||
+			arp->ar_pln != 4)
+		{
+			kfree_skb(skb, FREE_READ);
+			return 0;
+		}
+	}
+	else
+	{
+		if (arp->ar_hln != dev->addr_len    || 
+			dev->type != ntohs(arp->ar_hrd) ||
+			dev->flags & IFF_NOARP          ||
+			arp->ar_pln != 4)
+		{
+			kfree_skb(skb, FREE_READ);
+			return 0;
+		}
+	}
+#else
 	if (arp->ar_hln != dev->addr_len    || 
-     		dev->type != ntohs(arp->ar_hrd) || 
+#if CONFIG_AP1000
+	    /*
+	     * ARP from cafe-f was found to use ARPHDR_IEEE802 instead of
+	     * the expected ARPHDR_ETHER.
+	     */
+	    (strcmp(dev->name,"fddi") == 0 && 
+	     arp->ar_hrd != ARPHRD_ETHER && arp->ar_hrd != ARPHRD_IEEE802) ||
+	    (strcmp(dev->name,"fddi") != 0 &&
+	     dev->type != ntohs(arp->ar_hrd)) ||
+#else
+		dev->type != ntohs(arp->ar_hrd) ||
+#endif
 		dev->flags & IFF_NOARP          ||
 		arp->ar_pln != 4)
 	{
 		kfree_skb(skb, FREE_READ);
 		return 0;
-		/* Should this be an error/printk?  Seems like something */
-		/* you'd want to know about. Unless it's just !IFF_NOARP. -- MS */
 	}
+#endif
 
 /*
  *	Another test.
@@ -1757,11 +1842,10 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
  *	match the protocol the device speaks.  If it doesn't, there is a
  *	problem, so toss the packet.
  */
-/* Again, should this be an error/printk? -- MS */
 
   	switch (dev->type)
   	{
-#ifdef CONFIG_AX25
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
 		case ARPHRD_AX25:
 			if(arp->ar_pro != htons(AX25_P_IP))
 			{
@@ -1770,7 +1854,7 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 			}
 			break;
 #endif
-#ifdef CONFIG_NETROM
+#if defined(CONFIG_NETROM) || defined(CONFIG_NETROM_MODULE)
 		case ARPHRD_NETROM:
 			if(arp->ar_pro != htons(AX25_P_IP))
 			{
@@ -1782,14 +1866,8 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 		case ARPHRD_ETHER:
 		case ARPHRD_ARCNET:
 		case ARPHRD_METRICOM:
-			if(arp->ar_pro != htons(ETH_P_IP))
-			{
-				kfree_skb(skb, FREE_READ);
-				return 0;
-			}
-			break;
-
 		case ARPHRD_IEEE802:
+		case ARPHRD_FDDI:
 			if(arp->ar_pro != htons(ETH_P_IP))
 			{
 				kfree_skb(skb, FREE_READ);
@@ -1798,7 +1876,7 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 			break;
 
 		default:
-			printk("ARP: dev->type mangled!\n");
+			printk(KERN_ERR "ARP: dev->type mangled!\n");
 			kfree_skb(skb, FREE_READ);
 			return 0;
 	}
@@ -1850,9 +1928,10 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 	if (tip != dev->pa_addr && net_alias_has(skb->dev)) 
 	{
 		/*
-		 *	net_alias_dev_rcv_sel32 returns main dev if it fails to found other.
+		 *	net_alias_dev_rx32 returns main dev if it fails to found other.
+		 *  	if successful, also incr. alias rx count.
 		 */
-		dev = net_alias_dev_rcv_sel32(dev, AF_INET, sip, tip);
+		dev = net_alias_dev_rx32(dev, AF_INET, sip, tip);
 
 		if (dev->type != ntohs(arp->ar_hrd) || dev->flags & IFF_NOARP)
 		{
@@ -1903,7 +1982,7 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 				memcpy(ha, proxy_entry->ha, dev->addr_len);
 				arp_unlock();
 
-				rt = ip_rt_route(tip, 0);
+				rt = ip_rt_route(tip, 0, NULL);
 				if (rt  && rt->rt_dev != dev)
 					arp_send(ARPOP_REPLY,ETH_P_ARP,sip,dev,tip,sha,ha,sha);
 				ip_rt_put(rt);
@@ -1915,18 +1994,10 @@ int arp_rcv(struct sk_buff *skb, struct device *dev, struct packet_type *pt)
 		else
 			arp_send(ARPOP_REPLY,ETH_P_ARP,sip,dev,tip,sha,dev->dev_addr,sha);
 
-/*
- *	Handle gratuitous arp.
- */
-		arp_fast_lock();
-		arp_update(sip, sha, dev, NULL, 1);
-		arp_unlock();
-		kfree_skb(skb, FREE_READ);
-		return 0;
 	}
 
 	arp_fast_lock();
-	arp_update(sip, sha, dev, NULL, ip_chk_addr(tip) != IS_MYADDR);
+	arp_update(sip, sha, dev, 0, NULL, ip_chk_addr(tip) != IS_MYADDR && dev->type != ARPHRD_METRICOM);
 	arp_unlock();
 	kfree_skb(skb, FREE_READ);
 	return 0;
@@ -1973,24 +2044,29 @@ static int arp_req_set(struct arpreq *r, struct device * dev)
 	{
 		if (!mask && ip)
 			return -EINVAL;
-		if (!dev)
+		if (!dev) {
 			dev = dev_getbytype(r->arp_ha.sa_family);
+			if (!dev)
+				return -ENODEV;
+		}
 	}
 	else
 	{
-		if (ip_chk_addr(ip))
-			return -EINVAL;
 		if (!dev)
 		{
 			struct rtable * rt;
-			rt = ip_rt_route(ip, 0);
+			rt = ip_rt_route(ip, 0, NULL);
 			if (!rt)
 				return -ENETUNREACH;
 			dev = rt->rt_dev;
 			ip_rt_put(rt);
+			if (!dev)
+				return -ENODEV;
 		}
+		if (dev->type != ARPHRD_METRICOM && ip_chk_addr(ip))
+			return -EINVAL;
 	}
-	if (!dev || (dev->flags&(IFF_LOOPBACK|IFF_NOARP)))
+	if (dev->flags & (IFF_LOOPBACK | IFF_NOARP))
 		return -ENODEV;
 
 	if (r->arp_ha.sa_family != dev->type)	
@@ -2009,36 +2085,31 @@ static int arp_req_set(struct arpreq *r, struct device * dev)
 
 	while ((entry = *entryp) != NULL)
 	{
-		if (entry->ip == ip && entry->mask == mask && entry->dev == dev)
-			break;
-		if ((entry->mask & mask) != mask)
-		{
-			entry = NULL;
-			break;
+		/* User supplied arp entries are definitive - RHP 960603 */
+
+		if (entry->ip == ip && entry->mask == mask && entry->dev == dev) {
+			*entryp=entry->next;
+			arp_free_entry(entry);
+			continue;
 		}
+		if ((entry->mask & mask) != mask)
+			break;
 		entryp = &entry->next;
 	}
 
-	/*
-	 *	Do we need to create a new entry?
-	 */
-	
+	entry = arp_alloc_entry();
 	if (entry == NULL)
 	{
-		entry = arp_alloc_entry();
-		if (entry == NULL)
-		{
-			arp_unlock();
-			return -ENOMEM;
-		}
-		entry->ip = ip;
-		entry->dev = dev;
-		entry->mask = mask;
-		entry->flags = r->arp_flags;
-
-		entry->next = *entryp;
-		*entryp = entry;
+		arp_unlock();
+		return -ENOMEM;
 	}
+	entry->ip = ip;
+	entry->dev = dev;
+	entry->mask = mask;
+	entry->flags = r->arp_flags;
+
+	entry->next = *entryp;
+	*entryp = entry;
 
 	ha = r->arp_ha.sa_data;
 	if (empty(ha, dev->addr_len))
@@ -2295,8 +2366,8 @@ int arp_get_info(char *buffer, char **start, off_t offset, int length, int dummy
 /*
  *	Convert hardware address to XX:XX:XX:XX ... form.
  */
-#ifdef CONFIG_AX25
-#ifdef CONFIG_NETROM
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
+#if defined(CONFIG_NETROM) || defined(CONFIG_NETROM_MODULE)
 			if (entry->dev->type == ARPHRD_AX25 || entry->dev->type == ARPHRD_NETROM)
 			     strcpy(hbuffer,ax2asc((ax25_address *)entry->ha));
 			else {
@@ -2315,7 +2386,7 @@ int arp_get_info(char *buffer, char **start, off_t offset, int length, int dummy
 			}
 			hbuffer[--k]=0;
 	
-#ifdef CONFIG_AX25
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
 			}
 #endif
 			size = sprintf(buffer+len,
@@ -2401,3 +2472,39 @@ void arp_init (void)
 	netlink_attach(NETLINK_ARPD, arpd_callback);
 #endif
 }
+
+#ifdef CONFIG_AX25_MODULE
+
+/*
+ *	ax25 -> ascii conversion
+ */
+char *ax2asc(ax25_address *a)
+{
+	static char buf[11];
+	char c, *s;
+	int n;
+
+	for (n = 0, s = buf; n < 6; n++) {
+		c = (a->ax25_call[n] >> 1) & 0x7F;
+
+		if (c != ' ') *s++ = c;
+	}
+	
+	*s++ = '-';
+
+	if ((n = ((a->ax25_call[6] >> 1) & 0x0F)) > 9) {
+		*s++ = '1';
+		n -= 10;
+	}
+	
+	*s++ = n + '0';
+	*s++ = '\0';
+
+	if (*buf == '\0' || *buf == '-')
+	   return "*";
+
+	return buf;
+
+}
+
+#endif

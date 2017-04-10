@@ -6,7 +6,7 @@
  *	much hacked by:	Alan Cox
  */
 
-#include <linux/module.h> 
+#include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/firewall.h>
 
@@ -17,24 +17,24 @@ static struct firewall_ops *firewall_chain[NPROTO];
 /*
  *	Register a firewall
  */
- 
+
 int register_firewall(int pf, struct firewall_ops *fw)
 {
 	struct firewall_ops **p;
-	
+
 	if(pf<0||pf>=NPROTO)
 		return -EINVAL;
-	
+
 	/*
 	 *	Don't allow two people to adjust at once.
 	 */
-	 
+
 	while(firewall_lock)
 		schedule();
 	firewall_lock=1;
-	
+
 	p=&firewall_chain[pf];
-	
+
 	while(*p)
 	{
 		if(fw->fw_priority > (*p)->fw_priority)
@@ -42,7 +42,7 @@ int register_firewall(int pf, struct firewall_ops *fw)
 		p=&((*p)->next);
 	}
 
-	
+
 	/*
 	 * We need to use a memory barrier to make sure that this
 	 * works correctly even in SMP with weakly ordered writes.
@@ -70,20 +70,20 @@ int register_firewall(int pf, struct firewall_ops *fw)
 int unregister_firewall(int pf, struct firewall_ops *fw)
 {
 	struct firewall_ops **nl;
-	
+
 	if(pf<0||pf>=NPROTO)
 		return -EINVAL;
-	
+
 	/*
 	 *	Don't allow two people to adjust at once.
 	 */
-	 
+
 	while(firewall_lock)
 		schedule();
 	firewall_lock=1;
 
 	nl=&firewall_chain[pf];
-	
+
 	while(*nl!=NULL)
 	{
 		if(*nl==fw)
@@ -92,20 +92,20 @@ int unregister_firewall(int pf, struct firewall_ops *fw)
 			*nl = f;
 			firewall_lock=0;
 			return 0;
-		}			
+		}
 		nl=&((*nl)->next);
 	}
 	firewall_lock=0;
 	return -ENOENT;
 }
 
-int call_fw_firewall(int pf, struct device *dev, void *phdr)
+int call_fw_firewall(int pf, struct device *dev, void *phdr, void *arg)
 {
 	struct firewall_ops *fw=firewall_chain[pf];
-	
+
 	while(fw!=NULL)
 	{
-		int rc=fw->fw_forward(fw,pf,dev,phdr);
+		int rc=fw->fw_forward(fw,pf,dev,phdr,arg);
 		if(rc!=FW_SKIP)
 			return rc;
 		fw=fw->next;
@@ -116,14 +116,14 @@ int call_fw_firewall(int pf, struct device *dev, void *phdr)
 /*
  *	Actual invocation of the chains
  */
- 
-int call_in_firewall(int pf, struct device *dev, void *phdr)
+
+int call_in_firewall(int pf, struct device *dev, void *phdr, void *arg)
 {
 	struct firewall_ops *fw=firewall_chain[pf];
-	
+
 	while(fw!=NULL)
 	{
-		int rc=fw->fw_input(fw,pf,dev,phdr);
+		int rc=fw->fw_input(fw,pf,dev,phdr,arg);
 		if(rc!=FW_SKIP)
 			return rc;
 		fw=fw->next;
@@ -131,13 +131,13 @@ int call_in_firewall(int pf, struct device *dev, void *phdr)
 	return firewall_policy[pf];
 }
 
-int call_out_firewall(int pf, struct device *dev, void *phdr)
+int call_out_firewall(int pf, struct device *dev, void *phdr, void *arg)
 {
 	struct firewall_ops *fw=firewall_chain[pf];
-	
+
 	while(fw!=NULL)
 	{
-		int rc=fw->fw_output(fw,pf,dev,phdr);
+		int rc=fw->fw_output(fw,pf,dev,phdr,arg);
 		if(rc!=FW_SKIP)
 			return rc;
 		fw=fw->next;

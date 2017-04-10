@@ -1,3 +1,4 @@
+$Id: INTERFACE,v 1.6 1997/02/10 22:40:57 fritz Exp $
 
 Description of the Interface between Linklevel and Hardwarelevel
   of isdn4linux:
@@ -12,9 +13,29 @@ Description of the Interface between Linklevel and Hardwarelevel
   the fields. All further communication is done via callbacks using
   the function-pointers defined in isdn_if.
 
-  ATTENTION, CHANGES since version 0.6 are marked with   "***CHANGE0.6"!
-  ATTENTION, CHANGES since version 0.7 are marked with   "***CHANGE0.7"!
-  ATTENTION, CHANGES since version 0.71 are marked with  "***CHANGE0.7.1"!
+  Changes/Version numbering:
+
+  During development of the ISDN subsystem, several changes have been
+  made to the interface. Before it went into kernel, the package
+  had a unique version number. The last version, distributed separately
+  was 0.7.4. When the subsystem went into kernel, every functional unit
+  got a separate version number. These numbers are shown at initialization,
+  separated by slashes:
+
+     c.c/t.t/n.n/p.p/a.a
+
+  where
+
+   c.c is the revision of the common code.
+   t.t is the revision of the tty related code.
+   n.n is the revision of the network related code.
+   p.p is the revision of the ppp related code.
+   a.a is the revision of the audio related code.
+
+  Changes in this document are marked with '***CHANGEx' where x representing
+  the version number. If that number starts with 0, it refers to the old,
+  separately distributed package. If it starts with one of the letters
+  above, it refers to the revision of the corresponding module. 
 
 1. Description of the fields of isdn_if:
 
@@ -52,6 +73,11 @@ Description of the Interface between Linklevel and Hardwarelevel
     initialize this field to 0.
 
   void (*rcvcallb)(int, int, u_char*, int);
+
+    ***CHANGEc1.14: Declared obsolete. Do NOT use this field/function
+                    anymore, since it will be removed when all current
+                    LL drivers have been changed accordingly. Use
+                    rcvcallb_skb instead.
 
     This field will be set by LL. The HL-driver delivers received data-
     packets by calling this function.
@@ -114,6 +140,11 @@ Description of the Interface between Linklevel and Hardwarelevel
 
   int (*writebuf)(int, int, u_char*, int, int);
 
+    ***CHANGED1.14: Declared obsolete. Do NOT use this field/function
+                    anymore, since it will be removed when all current
+                    LL drivers have been changed accordingly. Set this
+                    field to NULL and use writebuf_skb instead.
+
     This field has to be preset by the HL-driver. The given function will
     be called by the LL for delivering data to be send via B-Channel.
 
@@ -149,11 +180,7 @@ Description of the Interface between Linklevel and Hardwarelevel
       Length of data accepted on success, else error-code (-EINVAL on
       oversized packets etc.)
 
-NOTE on writebuf and writebuf_skb:
-    The HL-driver may initialize one of the fields to NULL, in which case
-    the LL will call the non-NULL function only.
-
-  int (*writecmd)(u_char*, int, int);
+  int (*writecmd)(u_char*, int, int, int, int);
 
     This field has to be preset by the HL-driver. The given function will be
     called to perform write-requests on /dev/isdnctrl (i.e. sending commands
@@ -169,11 +196,15 @@ NOTE on writebuf and writebuf_skb:
                         memcpy, may NOT use schedule())
                     1 = call from user-space. (HL-driver must use
                         memcpy_fromfs, use of schedule() allowed)
+      int     driver-Id.
+      int     channel-number locally to the HL-driver. (starts with 0)
+
+***CHANGED1.14: The driver-Id and channel-number are new since this revision.
 
     Returnvalue:
       Length of data accepted on success, else error-code (-EINVAL etc.)
 
-  int (*readstat)(u_char*, int, int);
+  int (*readstat)(u_char*, int, int, int, int);
 
     This field has to be preset by the HL-driver. The given function will be
     called to perform read-requests on /dev/isdnctrl (i.e. reading replies
@@ -189,6 +220,10 @@ NOTE on writebuf and writebuf_skb:
                         memcpy, may NOT use schedule())
                     1 = call from user-space. (HL-driver must use
                         memcpy_fromfs, use of schedule() allowed)
+      int     driver-Id.
+      int     channel-number locally to the HL-driver. (starts with 0)
+
+***CHANGED1.14: The driver-Id and channel-number are new since this revision.
 
     Returnvalue:
       Length of data on success, else error-code (-EINVAL etc.)
@@ -214,23 +249,26 @@ NOTE on writebuf and writebuf_skb:
 
    Until now, the following commands are defined:
 
+***CHANGED1.34: The parameter "num" has been replaced by a union "para" containing
+                the old "num" and a new setup_type struct used for ISDN_CMD_DIAL
+                and ISDN_STAT_ICALL callback.
 
    ISDN_CMD_IOCTL:
 
      This command is intended for performing ioctl-calls for configuring
      hardware or similar purposes (setting port-addresses, loading firmware
      etc.) For this purpose, in the LL all ioctl-calls with an argument
-     >= ISDN_IOCTL_DRVIOCTL (0x100) will be handed transparently to this
+     >= IIOCDRVCTL (0x100) will be handed transparently to this
      function after subtracting 0x100 and placing the result in arg.
      Example:
        If a userlevel-program calls ioctl(0x101,...) the function gets
        called with the field command set to 1.
 
      Parameter:
-       driver  = driver-Id.
-       command = ISDN_CMD_IOCTL
-       arg     = Original ioctl-cmd - ISDN_IOCTL_DRVIOCTL
-       num     = first bytes filled with (unsigned long)arg
+       driver   = driver-Id.
+       command  = ISDN_CMD_IOCTL
+       arg      = Original ioctl-cmd - IIOCDRVCTL
+       para.num = first bytes filled with (unsigned long)arg
    
      Returnvalue:
        Depending on driver.
@@ -245,12 +283,14 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_DIAL
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = An ASCII-String containing the number to dial, the own
-                    EAZ or MSN, the Service-Indicator and the Additional
-                    Info. Format:
-                    "%s,%s,%d,%d" RemotePhoneNumber,EazOrMsn,SI,AI
+      
+      para.setup.phone  = An ASCII-String containing the number to dial.
+      para.setup.eazmsn = An ASCII-Sting containing the own EAZ or MSN.
+      para.setup.si1    = The Service-Indicator.
+      para.setup.si2    = Additional Service-Indicator.
+
                     If the Line has been designed as SPV (a special german
-                    feature, meaning semi-leased-line) the number has to
+                    feature, meaning semi-leased-line) the phone has to
                     start with an "S".
       ***CHANGE0.6: In previous versions the EAZ has been given in the
                     highbyte of arg.
@@ -265,7 +305,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_ACCEPTD
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_ACCEPTB:
 
@@ -276,7 +316,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_ACCEPTB
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_HANGUP:
 
@@ -288,7 +328,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_HANGUP
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_CLREAZ:
 
@@ -299,7 +339,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_CLREAZ
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_SETEAZ:
 
@@ -310,7 +350,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_SETEAZ
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = ASCII-String, containing the desired EAZ's/MSN's
+      para.num    = ASCII-String, containing the desired EAZ's/MSN's
                     (comma-separated). If an empty String is given, the
                     HL-driver should respond to ALL incoming calls,
                     regardless of the destination-address.
@@ -325,7 +365,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_GETEAZ
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = ASCII-String, containing the current EAZ's/MSN's
+      para.num    = ASCII-String, containing the current EAZ's/MSN's
 
   ISDN_CMD_SETSIL: (currently unused)
 
@@ -336,7 +376,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_SETSIL
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = ASCII-String, containing the desired Service-Indicators.
+      para.num    = ASCII-String, containing the desired Service-Indicators.
 
   ISDN_CMD_GETSIL: (currently unused)
 
@@ -347,7 +387,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_SETSIL
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = ASCII-String, containing the current Service-Indicators.
+      para.num    = ASCII-String, containing the current Service-Indicators.
 
   ISDN_CMD_SETL2:
 
@@ -362,7 +402,7 @@ NOTE on writebuf and writebuf_skb:
       arg         = channel-number locally to the driver. (starting with 0)
                     logical or'ed with (protocol-Id << 8)
                     protocol-Id is one of the constants ISDN_PROTO_L2...
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_GETL2: (currently unused)
 
@@ -373,7 +413,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_GETL2
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
     Returnvalue:
       current protocol-Id (one of the constants ISDN_L2_PROTO)
 
@@ -390,7 +430,7 @@ NOTE on writebuf and writebuf_skb:
       arg         = channel-number locally to the driver. (starting with 0)
                     logical or'ed with (protocol-Id << 8)
                     protocol-Id is one of the constants ISDN_PROTO_L3...
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_GETL2: (currently unused)
 
@@ -401,7 +441,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_GETL3
       arg         = channel-number locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
     Returnvalue:
       current protocol-Id (one of the constants ISDN_L3_PROTO)
 
@@ -415,7 +455,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_LOCK
       arg         = unused.
-      num         = unused.
+      para        = unused.
 
   ISDN_CMD_UNLOCK:
 
@@ -427,7 +467,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id.
       command     = ISDN_CMD_UNLOCK
       arg         = unused.
-      num         = unused.
+      para        = unused.
 
 3. Description of the events to be signaled by the HL-driver to th LL.
 
@@ -449,19 +489,29 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_STAVAIL
       arg         = length of available data.
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_ICALL:
 
     With this call, the HL-driver signals an incoming call to the LL.
 
     Parameter:
-      driver      = driver-Id
-      command     = ISDN_STAT_ICALL
-      arg         = channel-number, locally to the driver. (starting with 0)
-      num         = ASCII-String in the following format:
-                    "%s,%d,%d,%s",CallerNumber,ServiceIndicator,AddInfo,
-                    CalledNumber.
+      driver            = driver-Id
+      command           = ISDN_STAT_ICALL
+      arg               = channel-number, locally to the driver. (starting with 0)
+      para.setup.phone  = Callernumber.
+      para.setup.eazmsn = CalledNumber.
+      para.setup.si1    = Service Indicator.
+      para.setup.si2    = Additional Service Indicator.
+      para.setup.plan   = octet 3 from Calling party number Information Element.
+      para.setup.screen = octet 3a from Calling party number Information Element.
+
+    Return:
+      0           = No device matching this call.
+      1           = At least one device matching this call (RING on ttyI).
+                    HL-driver may send ALERTING on the D-channel in this case.
+      2           = Call will be rejected.
+      -1          = An error happened. (Invalid parameters for example.)
 
   ISDN_STAT_RUN:
 
@@ -472,7 +522,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_RUN
       arg         = unused.
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_STOP:
 
@@ -483,7 +533,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_STOP
       arg         = unused.
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_DCONN:
 
@@ -494,7 +544,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_DCONN
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_BCONN:
 
@@ -506,7 +556,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_BCONN
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_DHUP:
 
@@ -519,7 +569,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_DHUP
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_BHUP:
 
@@ -531,7 +581,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_BHUP
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_CINF:
 
@@ -542,7 +592,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_CINF
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = ASCII string containing charge-units (digits only).
+      para.num    = ASCII string containing charge-units (digits only).
 
   ISDN_STAT_LOAD: (currently unused)
 
@@ -555,7 +605,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_UNLOAD
       arg         = unused.
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_BSENT:
 
@@ -567,7 +617,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_BSENT
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_NODCH:
 
@@ -578,7 +628,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_NODCH
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = unused.
+      para        = unused.
 
   ISDN_STAT_ADDCH: (currently unused)
 
@@ -592,7 +642,7 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_ADDCH
       arg         = to be defined.
-      num         = to be defined.
+      para        = to be defined.
 
   ISDN_STAT_CAUSE:
 
@@ -605,5 +655,5 @@ NOTE on writebuf and writebuf_skb:
       driver      = driver-Id
       command     = ISDN_STAT_NODCH
       arg         = channel-number, locally to the driver. (starting with 0)
-      num         = ASCII string containing CAUSE-message.
+      para.num    = ASCII string containing CAUSE-message.
 

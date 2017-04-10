@@ -16,6 +16,7 @@
  *
  *	Changes:
  *
+ *	R. Drahtmueller	:	Set IFF_MULTICAST in dev->flags if applicable.
  *	Alan Cox	:	Removed get_address name clash with FPU.
  *	Alan Cox	:	Reformatted a bit.
  *	Gero Kuhlmann	:	Code cleanup
@@ -79,7 +80,7 @@
 #include <linux/net.h>
 #include <linux/netdevice.h>
 #include <linux/if_arp.h>
-#ifdef CONFIG_AX25
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
 #include <net/ax25.h>	/* For AX25_P_IP */
 #endif
 #include <linux/skbuff.h>
@@ -179,7 +180,11 @@ static int root_dev_open(void)
 		    (!user_dev_name[0] || !strcmp(dev->name, user_dev_name))) {
 			/* First up the interface */
 			old_flags = dev->flags;
+#ifdef CONFIG_IP_MULTICAST
+			dev->flags = IFF_UP | IFF_BROADCAST | IFF_RUNNING | IFF_MULTICAST;
+#else
 			dev->flags = IFF_UP | IFF_BROADCAST | IFF_RUNNING;
+#endif
 			if (!(old_flags & IFF_UP) && dev_open(dev)) {
 				dev->flags = old_flags;
 				continue;
@@ -306,7 +311,7 @@ static int root_rarp_recv(struct sk_buff *skb, struct device *dev, struct packet
 
 	/* If it's not ethernet or AX25, delete it. */
 	if ((rarp->ar_pro != htons(ETH_P_IP) && dev->type != ARPHRD_AX25) ||
-#ifdef CONFIG_AX25
+#if defined(CONFIG_AX25) || defined(CONFIG_AX25_MODULE)
 	   (rarp->ar_pro != htons(AX25_P_IP) && dev->type == ARPHRD_AX25) ||
 #endif
 	    rarp->ar_pln != 4) {
@@ -580,7 +585,7 @@ static inline int root_send_udp(struct socket *sock, void *buf, int size)
 	msg.msg_name = NULL;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	msg.msg_accrights = NULL;
+	msg.msg_control = NULL;
 	result = sock->ops->sendmsg(sock, &msg, size, 0, 0);
 	set_fs(oldfs);
 	return (result != size);
@@ -604,7 +609,7 @@ static inline int root_recv_udp(struct socket *sock, void *buf, int size)
 	msg.msg_name = NULL;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	msg.msg_accrights = NULL;
+	msg.msg_control = NULL;
 	msg.msg_namelen = 0;
 	result = sock->ops->recvmsg(sock, &msg, size, O_NONBLOCK, 0, &msg.msg_namelen);
 	set_fs(oldfs);
@@ -1079,7 +1084,7 @@ static int root_nfs_name(char *name)
 						sizeof(nfs_data.hostname)-1);
 
 	/* Set the name of the directory to mount */
-	if (nfs_path[0] == '\0' || !strncmp(name, "default", 7))
+	if (nfs_path[0] == '\0' || strncmp(name, "default", 7))
 		strncpy(buf, name, NFS_MAXPATHLEN);
 	else
 		strncpy(buf, nfs_path, NFS_MAXPATHLEN);

@@ -4,7 +4,7 @@
  *  Copyright (C) 1991, 1992  Linus Torvalds
  *
  * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file README.legal in the main directory of this archive
+ * License.  See the file COPYING in the main directory of this archive
  * for more details.
  */
 
@@ -447,7 +447,7 @@ asmlinkage int do_signal(unsigned long oldmask, struct pt_regs *regs_in)
 			if (current->pid == 1)
 				continue;
 			switch (signr) {
-			    case SIGCONT: case SIGCHLD: case SIGWINCH:
+			    case SIGCONT: case SIGCHLD: case SIGWINCH: case SIGURG:
 				continue;
 
 			    case SIGSTOP: case SIGTSTP: case SIGTTIN: case SIGTTOU:

@@ -24,7 +24,6 @@ struct fdb **fhpp = &fhp;
 static int fdb_inited = 0;
 
 int addr_cmp(unsigned char *a1, unsigned char *a2);
-static void printk_avl (struct fdb * tree);
 
 /*
  * fdb_head is the AVL tree corresponding to fdb
@@ -216,6 +215,11 @@ br_avl_insert (struct fdb * new_node)
 			break;
 		*stack_ptr++ = nodeplace; stack_count++;
 		if (addr_cmp(new_node->ula, node->ula) == 0) { /* update */
+		/*
+		 * Vova Oksman: There was the BUG, in case that port 
+		 * was changed we must to update it.
+		 */
+			node->port = new_node->port;
 			node->flags = new_node->flags;
 			node->timer = new_node->timer;	
 			return(0);
@@ -264,7 +268,7 @@ br_avl_remove (struct fdb * node_to_delete)
 		struct fdb * node = *nodeplace;
 		if (node == avl_br_empty) {
 			/* what? node_to_delete not found in tree? */
-			printk("avl_remove: node to delete not found in tree\n");
+			printk(KERN_ERR "br: avl_remove: node to delete not found in tree\n");
 			return(-1);
 		}
 		*stack_ptr++ = nodeplace; stack_count++;

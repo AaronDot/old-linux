@@ -5,6 +5,7 @@
  * Added /proc support, Dec 1995
  * Added bdflush entry and intvec min/max checking, 2/23/96, Tom Dyas.
  * Added hooks for /proc/sys/net (minor, minor patch), 96/4/1, Mike Shaver.
+ * Added kernel/java-{interpreter,appletviewer}, 96/5/10, Mike Shaver.
  */
 
 #include <linux/config.h>
@@ -20,7 +21,6 @@
 #include <asm/segment.h>
 
 #include <linux/utsname.h>
-#include <linux/swapctl.h>
 
 /* External variables not in a header file. */
 extern int panic_timeout;
@@ -97,6 +97,8 @@ extern int bdf_prm[], bdflush_min[], bdflush_max[];
 static int do_securelevel_strategy (ctl_table *, int *, int, void *, size_t *,
 				    void *, size_t, void **);
 
+extern char binfmt_java_interpreter[], binfmt_java_appletviewer[];
+
 /* The default sysctl tables: */
 
 static ctl_table root_table[] = {
@@ -136,8 +138,14 @@ static ctl_table kern_table[] = {
 #ifdef CONFIG_ROOT_NFS
 	{KERN_NFSRNAME, "nfs-root-name", nfs_root_name, NFS_ROOT_NAME_LEN,
 	 0644, NULL, &proc_dostring, &sysctl_string },
-	{KERN_NFSRNAME, "nfs-root-addrs", nfs_root_addrs, NFS_ROOT_ADDRS_LEN,
+	{KERN_NFSRADDRS, "nfs-root-addrs", nfs_root_addrs, NFS_ROOT_ADDRS_LEN,
 	 0644, NULL, &proc_dostring, &sysctl_string },
+#endif
+#ifdef CONFIG_BINFMT_JAVA
+	{KERN_JAVA_INTERPRETER, "java-interpreter", binfmt_java_interpreter,
+	 64, 0644, NULL, &proc_dostring, &sysctl_string },
+	{KERN_JAVA_APPLETVIEWER, "java-appletviewer", binfmt_java_appletviewer,
+	 64, 0644, NULL, &proc_dostring, &sysctl_string },
 #endif
 	{0}
 };
@@ -171,7 +179,7 @@ int do_sysctl (int *name, int nlen,
 	struct ctl_table_header *tmp;
 	void *context;
 	
-	if (nlen == 0 || nlen >= CTL_MAXNAME)
+	if (nlen <= 0 || nlen >= CTL_MAXNAME)
 		return -ENOTDIR;
 	
 	error = verify_area(VERIFY_READ,name,nlen*sizeof(int));
@@ -192,7 +200,7 @@ int do_sysctl (int *name, int nlen,
 	do {
 		context = 0;
 		error = parse_table(name, nlen, oldval, oldlenp, 
-				    newval, newlen, root_table, &context);
+				    newval, newlen, tmp->ctl_table, &context);
 		if (context)
 			kfree(context);
 		if (error != -ENOTDIR)
@@ -219,7 +227,7 @@ static int in_egroup_p(gid_t grp)
 {
 	int	i;
 
-	if (grp == current->euid)
+	if (grp == current->egid)
 		return 1;
 
 	for (i = 0; i < NGROUPS; i++) {
@@ -298,7 +306,8 @@ int do_sysctl_strategy (ctl_table *table,
 	if (newval) 
 		op |= 002;
 	if (ctl_perm(table, op))
-		return -EPERM;
+		if( table->data != &securelevel || current->euid)
+			return -EPERM;
 
 	if (table->strategy) {
 		rc = table->strategy(table, name, nlen, oldval, oldlenp,
@@ -369,12 +378,13 @@ struct ctl_table_header *register_sysctl_table(ctl_table * table,
 	return tmp;
 }
 
-void unregister_sysctl_table(struct ctl_table_header * table)
+void unregister_sysctl_table(struct ctl_table_header * header)
 {
-	DLIST_DELETE(table, ctl_entry);
+	DLIST_DELETE(header, ctl_entry);
 #ifdef CONFIG_PROC_FS
-	unregister_proc_table(table->ctl_table, &proc_sys_root);
+	unregister_proc_table(header->ctl_table, &proc_sys_root);
 #endif
+	kfree(header);
 }
 
 /*
@@ -386,9 +396,11 @@ void unregister_sysctl_table(struct ctl_table_header * table)
 /* Scan the sysctl entries in table and add them all into /proc */
 static void register_proc_table(ctl_table * table, struct proc_dir_entry *root)
 {
-	struct proc_dir_entry *de;
+	struct proc_dir_entry *de, *tmp;
+	int exists;
 	
 	for (; table->ctl_name; table++) {
+		exists = 0;
 		/* Can't do anything without a proc name. */
 		if (!table->procname)
 			continue;
@@ -417,12 +429,24 @@ static void register_proc_table(ctl_table * table, struct proc_dir_entry *root)
 		}
 		/* Otherwise it's a subdir */
 		else  {
-			de->ops = &proc_dir_inode_operations;
-			de->nlink++;
-			de->mode |= S_IFDIR;
+			/* First check to see if it already exists */
+			for (tmp = root->subdir; tmp; tmp = tmp->next) {
+				if (tmp->namelen == de->namelen &&
+				    !memcmp(tmp->name,de->name,de->namelen)) {
+					exists = 1;
+					kfree (de);
+					de = tmp;
+				}
+			}
+			if (!exists) {
+				de->ops = &proc_dir_inode_operations;
+				de->nlink++;
+				de->mode |= S_IFDIR;
+			}
 		}
 		table->de = de;
-		proc_register_dynamic(root, de);
+		if (!exists)
+			proc_register_dynamic(root, de);
 		if (de->mode & S_IFDIR )
 			register_proc_table(table->child, de);
 	}
@@ -441,8 +465,13 @@ static void unregister_proc_table(ctl_table * table, struct proc_dir_entry *root
 			}
 			unregister_proc_table(table->child, de);
 		}
-		proc_unregister(root, de->low_ino);
-		kfree(de);			
+		/* Don't unregister proc directories which still have
+		   entries... */
+		if (!((de->mode & S_IFDIR) && de->subdir)) {
+			proc_unregister(root, de->low_ino);
+			table->de = NULL;
+			kfree(de);			
+		}
 	}
 }
 
@@ -517,15 +546,13 @@ int proc_dostring(ctl_table *table, int write, struct file *filp,
 		((char *) table->data)[len] = 0;
 		filp->f_pos += *lenp;
 	} else {
-		len = strlen(table->data) + 1;
+		len = strlen(table->data);
 		if (len > table->maxlen)
 			len = table->maxlen;
 		if (len > *lenp)
 			len = *lenp;
-		if (len) {			
-			memcpy_tofs(buffer, table->data, len-1);
-			put_user(0, ((char *) buffer) + len - 1);
-		}
+		if (len)
+			memcpy_tofs(buffer, table->data, len);
 		if (len < *lenp) {
 			put_user('\n', ((char *) buffer) + len);
 			len++;

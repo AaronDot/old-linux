@@ -29,7 +29,6 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/timer.h>
-#include <linux/string.h>
 #include <linux/net.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
@@ -91,6 +90,8 @@ static struct notifier_block br_dev_notifier={
 
 void transmit_config(int port_no)			  /* (4.6.1)	 */
 {
+	if(!(br_stats.flags & BR_UP))
+		return; /* this should not happen but happens */
 	if (hold_timer[port_no].active) {	  /* (4.6.1.3.1)	 */
 		port_info[port_no].config_pending = TRUE;	/* (4.6.1.3.1)	 */
 	} else {				  /* (4.6.1.3.2)	 */
@@ -267,7 +268,7 @@ void root_selection(void)
 				  (((port_info[port_no].designated_cost
 				     + port_info[port_no].path_cost
 				     )
-				    ==
+				    <
 				    (port_info[root_port].designated_cost
 				     + port_info[root_port].path_cost
 				     )		  /* (4.6.8.3.1(2)) */
@@ -579,6 +580,7 @@ void br_init(void)
 {						  /* (4.8.1)	 */
 	int             port_no;
 
+	printk(KERN_INFO "Ethernet Bridge 002 for NET3.035 (Linux 2.0)\n");
 	bridge_info.designated_root = bridge_info.bridge_id;	/* (4.8.1.1)	 */
 	bridge_info.root_path_cost = Zero;
 	bridge_info.root_port = No_port;
@@ -870,13 +872,14 @@ int hold_timer_expired(int port_no)
 
 int send_config_bpdu(int port_no, Config_bpdu *config_bpdu)
 {
-struct sk_buff *skb;
-struct device *dev = port_info[port_no].dev;
-int size;
-unsigned long flags;
+	struct sk_buff *skb;
+	struct device *dev = port_info[port_no].dev;
+	int size;
 	
+	if(!(br_stats.flags & BR_UP))
+		return(-1); /* this should not happen but happens */
 	if (port_info[port_no].state == Disabled) {
-		printk("send_config_bpdu: port %i not valid\n",port_no);
+		printk(KERN_DEBUG "send_config_bpdu: port %i not valid\n",port_no);
 		return(-1);
 		}
 	if (br_stats.flags & BR_DEBUG)
@@ -887,7 +890,7 @@ unsigned long flags;
 	size = sizeof(Config_bpdu) + dev->hard_header_len;
 	skb = alloc_skb(size, GFP_ATOMIC);
 	if (skb == NULL) {
-		printk("send_config_bpdu: no skb available\n");
+		printk(KERN_DEBUG "send_config_bpdu: no skb available\n");
 		return(-1);
 		}
 	skb->dev = dev;
@@ -920,22 +923,20 @@ unsigned long flags;
 	skb->pkt_bridged = IS_BRIDGED;
 	skb->arp = 1;	/* do not resolve... */
 	skb->h.raw = skb->data + ETH_HLEN;
-	save_flags(flags);
-	cli();
-	skb_queue_tail(dev->buffs, skb);
-	restore_flags(flags);
+	dev_queue_xmit(skb, dev, SOPRI_INTERACTIVE);
 	return(0);
 }
 
 int send_tcn_bpdu(int port_no, Tcn_bpdu *bpdu)
 {
-struct sk_buff *skb;
-struct device *dev = port_info[port_no].dev;
-int size;
-unsigned long flags;
+	struct sk_buff *skb;
+	struct device *dev = port_info[port_no].dev;
+	int size;
 	
+	if(!(br_stats.flags & BR_UP))
+		return(-1); /* this should not happen but happens */
 	if (port_info[port_no].state == Disabled) {
-		printk("send_tcn_bpdu: port %i not valid\n",port_no);
+		printk(KERN_DEBUG "send_tcn_bpdu: port %i not valid\n",port_no);
 		return(-1);
 		}
 	if (br_stats.flags & BR_DEBUG)
@@ -943,7 +944,7 @@ unsigned long flags;
 	size = sizeof(Tcn_bpdu) + dev->hard_header_len;
 	skb = alloc_skb(size, GFP_ATOMIC);
 	if (skb == NULL) {
-		printk("send_tcn_bpdu: no skb available\n");
+		printk(KERN_DEBUG "send_tcn_bpdu: no skb available\n");
 		return(-1);
 		}
 	skb->dev = dev;
@@ -976,10 +977,8 @@ unsigned long flags;
 	skb->pkt_bridged = IS_BRIDGED;
 	skb->arp = 1;	/* do not resolve... */
 	skb->h.raw = skb->data + ETH_HLEN;
-	save_flags(flags);
-	cli();
-	skb_queue_tail(dev->buffs, skb);
-	restore_flags(flags);
+	
+	dev_queue_xmit(skb, dev, SOPRI_INTERACTIVE);
 	return(0);
 }
 
@@ -1033,9 +1032,11 @@ static int br_device_event(struct notifier_block *unused, unsigned long event, v
 			}
 		}
 		break;
+#if 0
 	default:
 		printk("br_device_event: unknown event [%x]\n",
 			(unsigned int)event);
+#endif			
 	}
 	return NOTIFY_DONE;
 }
@@ -1054,7 +1055,7 @@ int br_receive_frame(struct sk_buff *skb)	/* 3.5 */
 		printk("br_receive_frame: ");
 	/* sanity */
 	if (!skb) {
-		printk("no skb!\n");
+		printk(KERN_CRIT "br_receive_frame: no skb!\n");
 		return(1);
 	}
 
@@ -1127,14 +1128,15 @@ int br_receive_frame(struct sk_buff *skb)	/* 3.5 */
 					port_info[port].dev->dev_addr, 
 					ETH_ALEN) == 0) 
 			{
+				/* Packet is for us */
+				skb->pkt_type = PACKET_HOST;
 				return(0);	/* pass frame up our stack (this will */
 						/* happen in net_bh() in dev.c) */
 			}
 			/* ok, forward this frame... */
-			skb_device_lock(skb);
 			return(br_forward(skb, port));
 		default:
-			printk("br_receive_frame: port [%i] unknown state [%i]\n",
+			printk(KERN_DEBUG "br_receive_frame: port [%i] unknown state [%i]\n",
 				port, port_info[port].state);
 			return(0);	/* pass frame up stack? */
 	}
@@ -1153,9 +1155,16 @@ int br_tx_frame(struct sk_buff *skb)	/* 3.5 */
 	/* sanity */
 	if (!skb) 
 	{
-		printk("br_tx_frame: no skb!\n");
+		printk(KERN_CRIT "br_tx_frame: no skb!\n");
 		return(0);
 	}
+	
+	if (!skb->dev)
+	{
+		printk(KERN_CRIT "br_tx_frame: no dev!\n");
+		return(0);
+	}
+	
 	/* check for loopback */
 	if (skb->dev->flags & IFF_LOOPBACK)
 		return(0);
@@ -1208,7 +1217,7 @@ int br_learn(struct sk_buff *skb, int port)	/* 3.8 */
 				GFP_ATOMIC);
 
 			if (!f) {
-				printk("br_learn: unable to malloc fdb\n");
+				printk(KERN_DEBUG "br_learn: unable to malloc fdb\n");
 				return(-1);
 			}
 			f->port = port;	/* source port */
@@ -1260,7 +1269,6 @@ int br_dev_drop(struct sk_buff *skb)
 int br_forward(struct sk_buff *skb, int port)	/* 3.7 */
 {
 	struct fdb *f;
-	unsigned long flags;
 	
 	/*
    	 * flood all ports with frames destined for a group
@@ -1287,7 +1295,7 @@ int br_forward(struct sk_buff *skb, int port)	/* 3.7 */
 		/*
 		 *	Send flood and drop.
 		 */
-		if (!f | !(f->flags & FDB_ENT_VALID)) {
+		if (!f || !(f->flags & FDB_ENT_VALID)) {
 		 	/* not found; flood all ports */
 			br_flood(skb, port);
 			return(br_dev_drop(skb));
@@ -1295,9 +1303,16 @@ int br_forward(struct sk_buff *skb, int port)	/* 3.7 */
 		/*
 		 *	Sending
 		 */
-		if (port_info[f->port].state == Forwarding) {
+
+		/*
+		 * Vova Oksman: There was the BUG, we must to check timer 
+		 * before comparing source and destination ports, becouse
+		 * case that destination was switched from same port with
+		 * source to other port. 
+		 */
 			/* has entry expired? */
-			if (f->timer + fdb_aging_time < CURRENT_TIME) {
+		if (port_info[f->port].state == Forwarding &&
+		    f->timer + fdb_aging_time < CURRENT_TIME) {
 				/* timer expired, invalidate entry */
 				f->flags &= ~FDB_ENT_VALID;
 				if (br_stats.flags & BR_DEBUG)
@@ -1308,6 +1323,7 @@ int br_forward(struct sk_buff *skb, int port)	/* 3.7 */
 				br_flood(skb, port);
 				return(br_dev_drop(skb));
 			}
+		if (f->port!=port && port_info[f->port].state == Forwarding) {
 			/* mark that's we've been here... */
 			skb->pkt_bridged = IS_BRIDGED;
 			
@@ -1344,7 +1360,6 @@ int br_flood(struct sk_buff *skb, int port)
 {
 	int i;
 	struct sk_buff *nskb;
-	unsigned long flags;
 
 	for (i = One; i <= No_of_ports; i++) 
 	{
@@ -1353,9 +1368,15 @@ int br_flood(struct sk_buff *skb, int port)
 		if (port_info[i].state == Forwarding) 
 		{
 			nskb = skb_clone(skb, GFP_ATOMIC);
+			if(nskb==NULL)
+				continue;
 			/* mark that's we've been here... */
 			nskb->pkt_bridged = IS_BRIDGED;
-			nskb->arp = skb->arp;
+			/* Send to each port in turn */
+			nskb->dev= port_info[i].dev;
+			/* To get here we must have done ARP already,
+			   or have a received valid MAC header */
+			nskb->arp = 1;
 			
 /*			printk("Flood to port %d\n",i);*/
 			nskb->h.raw = nskb->data + ETH_HLEN;
@@ -1402,7 +1423,7 @@ void br_bpdu(struct sk_buff *skb) /* consumes skb */
 		return;
 	}
 		
-	bpdu = (Tcn_bpdu *)skb->data + ETH_HLEN;
+	bpdu = (Tcn_bpdu *) (skb->data + ETH_HLEN);
 	switch (bpdu->type) {
 		case BPDU_TYPE_CONFIG:
 			received_config_bpdu(port, (Config_bpdu *)bpdu);
@@ -1411,7 +1432,7 @@ void br_bpdu(struct sk_buff *skb) /* consumes skb */
 			received_tcn_bpdu(port, bpdu);
 			break;
 		default:
-			printk("br_bpdu: received unknown bpdu, type = %i\n",
+			printk(KERN_DEBUG "br_bpdu: received unknown bpdu, type = %i\n",
 				bpdu->type);
 			/* break; */
 	}
@@ -1422,7 +1443,6 @@ int br_ioctl(unsigned int cmd, void *arg)
 {
 	int err;
 	struct br_cf bcf;
-	int i;
 
 	switch(cmd)
 	{
@@ -1447,14 +1467,14 @@ int br_ioctl(unsigned int cmd, void *arg)
 				case BRCMD_BRIDGE_ENABLE:
 					if (br_stats.flags & BR_UP)
 						return(-EALREADY);	
-					printk("br: enabling bridging function\n");
+					printk(KERN_DEBUG "br: enabling bridging function\n");
 					br_stats.flags |= BR_UP;	/* enable bridge */
 					start_hello_timer();
 					break;
 				case BRCMD_BRIDGE_DISABLE:
 					if (!(br_stats.flags & BR_UP))
 						return(-EALREADY);	
-					printk("br: disabling bridging function\n");
+					printk(KERN_DEBUG "br: disabling bridging function\n");
 					br_stats.flags &= ~BR_UP;	/* disable bridge */
 					stop_hello_timer();
 #if 0					
@@ -1468,7 +1488,7 @@ int br_ioctl(unsigned int cmd, void *arg)
 						return(-EINVAL);
 					if (port_info[bcf.arg1].state != Disabled)
 						return(-EALREADY);
-					printk("br: enabling port %i\n",bcf.arg1);
+					printk(KERN_DEBUG "br: enabling port %i\n",bcf.arg1);
 					enable_port(bcf.arg1);
 					break;
 				case BRCMD_PORT_DISABLE:
@@ -1476,7 +1496,7 @@ int br_ioctl(unsigned int cmd, void *arg)
 						return(-EINVAL);
 					if (port_info[bcf.arg1].state == Disabled)
 						return(-EALREADY);
-					printk("br: disabling port %i\n",bcf.arg1);
+					printk(KERN_DEBUG "br: disabling port %i\n",bcf.arg1);
 					disable_port(bcf.arg1);
 					break;
 				case BRCMD_SET_BRIDGE_PRIORITY:

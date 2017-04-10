@@ -55,20 +55,15 @@ included and seems to be working fine!
 Where do I discuss these drivers?
 ---------------------------------
 
-HEY!! - the linux-arcnet@807-city.on.ca mailing list is now so unstable
-that I can't recommend people even bother with it.  I no longer have an
-account on 807-CITY (though they still graciously forward my mail to me) so
-there's not much I can do.
-
-However, Tomasz Motylewski has been so kind as to set up a new and improved
-mailing list; subscribe by sending a message with the BODY "subscribe
+Tomasz Motylewski has been so kind as to set up a new and improved
+mailing list.  Subscribe by sending a message with the BODY "subscribe
 linux-arcnet YOUR REAL NAME" to listserv@tichy.ch.uj.edu.pl.  Then, to
 submit messages to the list, mail to linux-arcnet@tichy.ch.uj.edu.pl.
 
 There are archives of the mailing list at:
 	http://tichy.ch.uj.edu.pl/lists/linux-arcnet
 
-The people on linux-net@vger.rutgers.edu have also been known to be very
+The people on linux-net@vger.kernel.org have also been known to be very
 helpful, especially when we're talking about ALPHA Linux kernels that may or
 may not work right in the first place.
 
@@ -122,11 +117,8 @@ disabled by taking D_INIT out of the list of debug flags in arcnet.c.)
 Loadable Module Support
 -----------------------
 
-Configure and rebuild Linux.  When asked, answer 'n' to "arcnet support" if
+Configure and rebuild Linux.  When asked, answer 'm' to "arcnet support" if
 you want to use the loadable module.
-
-Actually, with Linux 1.3.24 and higher, you should answer 'm' to build the
-module.
 
 	make config
 	make dep
@@ -135,15 +127,16 @@ module.
 	make modules
 	
 If you're using a loadable module, you need to use insmod to load it, and
-you need to specify various characteristics of your card on the command
-line.  For example:
-	cd /usr/src/linux/modules
-	insmod arcnet.o io=0x300 irqnum=2 shmem=0xd0000
-You can also add a num=1, num=2 etc for additional arcnet cards that will
-use arc1, arc2 etc for their device names (instead of the default, arc0).
+you can specify various characteristics of your card on the command
+line.  (In recent versions of the driver, autoprobing is much more reliable
+and works as a module, so most of this is now unnecessary.)
 
-** NEWS FLASH!  Starting with 2.30 ALPHA, the ARCnet driver can autoprobe
-   even as a module.  So "insmod arcnet.o" by itself should work.
+For example:
+	cd /usr/src/linux/modules
+	insmod arcnet.o io=0x300 irq=2 shmem=0xd0000
+
+You can name the device using something like "device=arc1" (for a second
+card) or "device=eth0" (for weird compatibility reasons) if you like.
 	
 
 Using the Driver
@@ -154,17 +147,30 @@ your card automatically when you boot.
 
 Go read the NET-2-HOWTO and ETHERNET-HOWTO for Linux; they should be
 available where you picked up this driver.  Think of your ARCnet as a
-souped-up (or down, as the case may be) ethernet card.
+souped-up (or down, as the case may be) Ethernet card.
 
 By the way, be sure to change all references from "eth0" to "arc0" in the
-HOWTOs.  Remember that ARCnet isn't a "true" ethernet, and the device name
+HOWTOs.  Remember that ARCnet isn't a "true" Ethernet, and the device name
 is DIFFERENT.
+
+
+Multiple Cards in One Computer
+------------------------------
+
+Linux has pretty good support for this now, but since I've been busy, the
+ARCnet driver has somewhat suffered in this respect.  For now, the easiest
+way to use multiple ARCnet cards is to build it as a loadable module and
+then do something like this:
+	insmod -o arc0 arcnet
+	insmod -o arc1 arcnet device=arc1
+(Note that in the first line, the default is device=arc0, but it doesn't
+hurt if you want to add it for consistency.)
 
 
 How do I get it to work with...?
 --------------------------------
 
-NFS: Should be fine linux->linux, just pretend you're using ethernet cards. 
+NFS: Should be fine Linux->Linux, just pretend you're using Ethernet cards. 
         oak.oakland.edu:/simtel/msdos/nfs has some nice DOS clients.  There
         is also a DOS-based NFS server called SOSS.  It doesn't multitask
         quite the way Linux does (actually, it doesn't multitask AT ALL) but
@@ -190,7 +196,7 @@ Windows:  See DOS :)  Trumpet Winsock works fine with either the Novell or
 
 LAN Manager and Windows for Workgroups: These programs use protocols that
         are incompatible with the internet standard.  They try to pretend
-        the cards are ethernet, and confuse everyone else on the network. 
+        the cards are Ethernet, and confuse everyone else on the network. 
         
         However, v2.00 and higher of the Linux ARCnet driver supports this
         protocol via the 'arc0e' device.  See the section on "Multiprotocol
@@ -208,16 +214,19 @@ Windows 95: Tools are included with Win95 that let you use either the LANMAN
 	you're completely insane, and/or you need to build some kind of
 	hybrid network that uses both encapsulation types.
 
-OS2: Has not been tested.  The "correct" solution would be to buy either of
-	IBM's "TCP/IP for OS/2" or "Warp Connect" packages.  However,
-	ftp.microsoft.com also has a freeware Lan Manager for OS/2 client
+OS2: I've been told it works under Warp Connect with an ARCnet driver from
+	SMC.  You need to use the 'arc0e' interface for this.  If you get
+	the SMC driver to work with the TCP/IP stuff included in the
+	"normal" Warp Bonus Pack, let me know.
+
+	ftp.microsoft.com also has a freeware "Lan Manager for OS/2" client
 	which should use the same protocol as WfWg does.  I had no luck
 	installing it under Warp, however.  Please mail me with any results.
 
 NetBSD/AmiTCP: These use an old version of the Internet standard ARCnet
 	protocol (RFC1051) which is compatible with the Linux driver v2.10
 	ALPHA and above using the arc0s device. (See "Multiprotocol ARCnet"
-	below.)
+	below.)  ** Newer versions of NetBSD apparently support RFC1201.
 
 
 Using Multiprotocol ARCnet
@@ -281,14 +290,14 @@ can set up your network then:
    If you need only arc0, then the following commands should get you going:
    	ifconfig arc0 MY.IP.ADD.RESS
    	route add MY.IP.ADD.RESS arc0
-   	route add SUB.NET.ADD.RESS arc0
+   	route add -net SUB.NET.ADD.RESS arc0
    	[add other local routes here]
    	
    If you need arc0e (and only arc0e), it's a little different:
    	ifconfig arc0 MY.IP.ADD.RESS
    	ifconfig arc0e MY.IP.ADD.RESS
    	route add MY.IP.ADD.RESS arc0e
-   	route add SUB.NET.ADD.RESS arc0e
+   	route add -net SUB.NET.ADD.RESS arc0e
    
    arc0s works much the same way as arc0e.
 
@@ -320,11 +329,10 @@ can set up your network then:
    	ifconfig arc0 insight
    	route add insight arc0
    	route add freedom arc0	/* I would use the subnet here (like I said
-					to to in "single protocol" above),
-   					but the rest of the subnet
-   					unfortunately lies across the PPP
-   					link on freedom, which confuses
-   					things. */
+					in "single protocol" above), but the
+					rest of the subnet unfortunately
+					lies across the PPP link on freedom,
+					which confuses things. */
    	route add default gw freedom
    	
    And freedom gets configured like so:

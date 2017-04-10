@@ -21,7 +21,7 @@ Therapy? for their CD 'Troublegum' which really made me rock.
 VoxWare family of drivers.
 
 This file is subject to the terms and conditions of the GNU General Public
-License.  See the file README.legal in the main directory of this archive
+License.  See the file COPYING in the main directory of this archive
 for more details.
 
 History:
@@ -57,7 +57,7 @@ History:
 			to cut data only at sample sizes, buffer size is now
 			a kernel runtime option, implemented fsync() & several
 			minor improvements
-		++Guenther: useful hints and bugfixes, cross-checked it for
+		++Guenther: useful hints and bug fixes, cross-checked it for
 			Falcons
 
 1996/3/9	++geert: support added for Amiga, A-law, 16-bit little endian.
@@ -99,7 +99,7 @@ extern void atari_microwire_cmd(int cmd);
 
 #ifdef CONFIG_AMIGA
    /*
-    *	The minimum period for audio depends on htotal (for OCS/ECS/AGA)
+    *	The minimum period for audio depends on total (for OCS/ECS/AGA)
     *	(Imported from arch/m68k/amiga/amisound.c)
     */
 
@@ -307,7 +307,7 @@ static char alaw2dma16[] = {
 
 #ifdef HAS_14BIT_TABLES
 
-/* 14 bit mu-law (lsb) */
+/* 14 bit mu-law (LSB) */
 
 static char alaw2dma14l[] = {
         33,     33,     33,     33,     33,     33,     33,     33,
@@ -344,7 +344,7 @@ static char alaw2dma14l[] = {
         14,     12,     10,      8,      6,      4,      2,      0
 };
 
-/* 14 bit A-law (lsb) */
+/* 14 bit A-law (LSB) */
 
 static char alaw2dma14l[] = {
         32,     32,     32,     32,     32,     32,     32,     32,
@@ -1534,7 +1534,7 @@ static void AtaFree(void *obj, unsigned int size)
 	order++;
 	a_size <<= 1;
     }
-    free_pages (obj, order);
+    free_pages ((unsigned long) obj, order);
 }
 
 static int AtaIrqInit(void)

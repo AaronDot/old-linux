@@ -26,7 +26,7 @@
 #define MD_DRIVER
 #define MD_PERSONALITY
 
-static void create_strip_zones (int minor, struct md_dev *mddev)
+static int create_strip_zones (int minor, struct md_dev *mddev)
 {
   int i, j, c=0;
   int current_offset=0;
@@ -38,7 +38,7 @@ static void create_strip_zones (int minor, struct md_dev *mddev)
   for (i=1; i<mddev->nb_dev; i++)
   {
     for (j=0; j<i; j++)
-      if (devices[minor][i].size==devices[minor][j].size)
+      if (mddev->devices[i].size==mddev->devices[j].size)
       {
 	c=1;
 	break;
@@ -50,8 +50,8 @@ static void create_strip_zones (int minor, struct md_dev *mddev)
     c=0;
   }
 
-  data->strip_zone=kmalloc (sizeof(struct strip_zone)*data->nr_strip_zones,
-			      GFP_KERNEL);
+  if ((data->strip_zone=vmalloc(sizeof(struct strip_zone)*data->nr_strip_zones)) == NULL)
+    return 1;
 
   data->smallest=NULL;
   
@@ -62,12 +62,12 @@ static void create_strip_zones (int minor, struct md_dev *mddev)
     c=0;
 
     for (j=0; j<mddev->nb_dev; j++)
-      if (devices[minor][j].size>current_offset)
+      if (mddev->devices[j].size>current_offset)
       {
-	data->strip_zone[i].dev[c++]=devices[minor]+j;
+	data->strip_zone[i].dev[c++]=mddev->devices+j;
 	if (!smallest_by_zone ||
-	    smallest_by_zone->size > devices[minor][j].size)
-	  smallest_by_zone=devices[minor]+j;
+	    smallest_by_zone->size > mddev->devices[j].size)
+	  smallest_by_zone=mddev->devices+j;
       }
 
     data->strip_zone[i].nb_dev=c;
@@ -81,44 +81,28 @@ static void create_strip_zones (int minor, struct md_dev *mddev)
 					   data->strip_zone[i-1].size) : 0;
     current_offset=smallest_by_zone->size;
   }
+  return 0;
 }
 
 static int raid0_run (int minor, struct md_dev *mddev)
 {
-  int cur=0, i=0, size, zone0_size, nb_zone, min;
+  int cur=0, i=0, size, zone0_size, nb_zone;
   struct raid0_data *data;
 
-  min=1 << FACTOR_SHIFT(FACTOR(mddev));
-
-  for (i=0; i<mddev->nb_dev; i++)
-    if (devices[minor][i].size<min)
-    {
-      printk ("Cannot use %dk chunks on dev %s\n", min,
-	      partition_name (devices[minor][i].dev));
-      return -EINVAL;
-    }
-  
   MOD_INC_USE_COUNT;
-  
-  /* Resize devices according to the factor */
-  md_size[minor]=0;
-  
-  for (i=0; i<mddev->nb_dev; i++)
-  {
-    devices[minor][i].size &= ~((1 << FACTOR_SHIFT(FACTOR(mddev))) - 1);
-    md_size[minor] += devices[minor][i].size;
-  }
 
-  mddev->private=kmalloc (sizeof (struct raid0_data), GFP_KERNEL);
+  if ((mddev->private=vmalloc (sizeof (struct raid0_data))) == NULL) return 1;
   data=(struct raid0_data *) mddev->private;
   
-  create_strip_zones (minor, mddev);
+  if (create_strip_zones (minor, mddev)) return 1;
 
   nb_zone=data->nr_zones=
     md_size[minor]/data->smallest->size +
     (md_size[minor]%data->smallest->size ? 1 : 0);
-  
-  data->hash_table=kmalloc (sizeof (struct raid0_hash)*nb_zone, GFP_KERNEL);
+
+  printk ("raid0 : Allocating %d bytes for hash.\n",sizeof(struct raid0_hash)*nb_zone);
+  if ((data->hash_table=vmalloc (sizeof (struct raid0_hash)*nb_zone)) == NULL)
+    return 1;
 
   size=data->strip_zone[cur].size;
 
@@ -161,9 +145,9 @@ static int raid0_stop (int minor, struct md_dev *mddev)
 {
   struct raid0_data *data=(struct raid0_data *) mddev->private;
 
-  kfree (data->hash_table);
-  kfree (data->strip_zone);
-  kfree (data);
+  vfree (data->hash_table);
+  vfree (data->strip_zone);
+  vfree (data);
 
   MOD_DEC_USE_COUNT;
   return 0;
@@ -259,6 +243,7 @@ static int raid0_status (char *page, int minor, struct md_dev *mddev)
 		 data->strip_zone[j].size);
   }
 #endif
+  sz+=sprintf (page+sz, " %dk chunks", 1<<FACTOR_SHIFT(FACTOR(mddev)));
   return sz;
 }
 
@@ -267,11 +252,14 @@ static struct md_personality raid0_personality=
 {
   "raid0",
   raid0_map,
+  NULL,				/* no special make_request */
+  NULL,				/* no special end_request */
   raid0_run,
   raid0_stop,
   raid0_status,
   NULL,				/* no ioctls */
-  0
+  0,
+  NULL,				/* no error_handler */
 };
 
 
@@ -291,10 +279,7 @@ int init_module (void)
 
 void cleanup_module (void)
 {
-  if (MOD_IN_USE)
-    printk ("md raid0 : module still busy...\n");
-  else
-    unregister_md_personality (RAID0);
+  unregister_md_personality (RAID0);
 }
 
 #endif

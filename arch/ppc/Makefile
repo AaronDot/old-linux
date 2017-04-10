@@ -12,68 +12,57 @@
 #
 # Copyright (C) 1994 by Linus Torvalds
 # Changes for PPC by Gary Thomas
-# Modified by Cort Dougan
 #
+
 # PowerPC (cross) tools
-AS		= /usr/local/bin/as.ppc
+SUFFIX		=.ppc
+#AS		= /u/cort/ppc/gcc/ppc-linux-elf/bin/as
+AS		= as$(SUFFIX)
 ASFLAGS		= 
-LD		= /u/cort/ppc-gcc/bin/ld.ppc
-#LINKFLAGS	= -T arch/ppc/ld.script -Ttext 0x90000000 -Map vmlinux.map
+#LD		= /u/cort/ppc/gcc/ppc-linux-elf/bin/ld
+LD		= ld$(SUFFIX)
 LINKFLAGS	= -T arch/ppc/ld.script -Ttext 0x90000000 
 HOSTCC		= gcc
-CC		= /usr/local/bin/gcc.ppc 
-CFLAGS		= -D__KERNEL__ -I$(TOPDIR)/include \
+#CC		= /u/cort/ppc/gcc/bin/gcc
+CC		= gcc$(SUFFIX)
+#CC 		= /u/cort/ppc/gcc/bin/gcc.ppc
+CFLAGS		= -D__KERNEL__ -I$(TOPDIR)/include -D__powerpc__ \
 		-Wstrict-prototypes \
 		-fomit-frame-pointer \
 		-fno-builtin \
 		-finhibit-size-directive \
-		-O2 -pipe
-#-Wall
+		-O2 -fsigned-char
 CPP		= $(CC) -E $(CFLAGS)
-AR		= /u/cort/ppc-gcc/bin/ar.ppc
-RANLIB		= /u/cort/ppc-gcc/bin/ranlib.ppc
-STRIP		= /u/cort/ppc-gcc/bin/strip.ppc
-NM		= /u/cort/ppc-gcc/bin/nm.ppc
+#AR		= /u/cort/ppc/gcc/ppc-linux-elf/bin/ar
+AR		= ar$(SUFFIX)
+#RANLIB		= /u/cort/ppc/gcc/ppc-linux-elf/bin/ranlib
+RANLIB		= ar$(SUFFIX)
+#STRIP		= /u/cort/ppc/gcc/ppc-linux-elf/bin/strip
+STRIP		= strip$(SUFFIX)
+#NM		= /u/cort/ppc/gcc/ppc-linux-elf/bin/nm
+NM		= nm$(SUFFIX)
 
 #
-# Set these to indicate how to link it..
+# NFS_ROOT_NAME specifies the default name of the directory to mount
+# as root via NFS, if the kernel does not get the "root=" option from
+# the boot loader. The "%s" will be replaced by the IP-number of the
+# local system.
 #
-# -zmagic:   
-#
-# ZLINKFLAGS   = -Ttext 0x1000
-# LINKFLAGS    = -Ttext 0x100000
-#
-# -qmagic (we need to remove the 32 byte header for bootup purposes)
-#
-## ZLINKFLAGS =-qmagic -Ttext 0xfe0
-## LINKFLAGS =-qmagic -Ttext 0xfffe0
-## CFLAGS := $(CFLAGS) -pipe
-
-## ifdef CONFIG_M486
-## CFLAGS := $(CFLAGS) -m486
-## else
-## ifdef CONFIG_M586
-## CFLAGS := $(CFLAGS) -mpentium
-## else
-## CFLAGS := $(CFLAGS) -m386
-## endif
-## endif
+NFS_ROOT = -DNFS_ROOT="\"/joplin/ppc/root/\""
 
 HEAD := arch/ppc/kernel/head.o
 
-ARCH_SUBDIRS = arch/ppc/kernel arch/ppc/mm
+ARCH_SUBDIRS = arch/ppc/kernel arch/ppc/mm arch/ppc/lib
 SUBDIRS := $(SUBDIRS) $(ARCH_SUBDIRS)
-ARCHIVES := arch/ppc/kernel/kernel.o arch/ppc/mm/mm.o $(ARCHIVES)
+ARCHIVES := arch/ppc/kernel/kernel.o arch/ppc/mm/mm.o arch/ppc/lib/lib.o $(ARCHIVES)
 
-## ifdef CONFIG_IBCS
-## SUBDIRS := $(SUBDIRS) arch/ppc/ibcs
-## DRIVERS := $(DRIVERS) arch/ppc/ibcs/ibcs.o
-## endif
 
-## ifdef CONFIG_MATH_EMULATION
-## SUBDIRS := $(SUBDIRS) arch/ppc/math-emu
-## DRIVERS := $(DRIVERS) arch/ppc/math-emu/math.a
-## endif
+MAKEBOOT = $(MAKE) -C arch/$(ARCH)/boot
+
+tImage: vmlinux
+	@$(MAKEBOOT) tImage
+
+
 
 arch/ppc/kernel: dummy
 	$(MAKE) linuxsubdirs SUBDIRS=arch/ppc/kernel
@@ -81,28 +70,15 @@ arch/ppc/kernel: dummy
 arch/ppc/mm: dummy
 	$(MAKE) linuxsubdirs SUBDIRS=arch/ppc/mm
 
-## MAKEBOOT = $(MAKE) -C arch/$(ARCH)/boot
-## 
-## zImage: vmlinux
-## 	@$(MAKEBOOT) zImage
-## 
-## compressed: zImage
-## 
-## zlilo: vmlinux
-## 	@$(MAKEBOOT) zlilo
-## 
-## zdisk: vmlinux
-## 	@$(MAKEBOOT) zdisk
-## 
-## install: vmlinux
-## 	@$(MAKEBOOT) install
+arch/ppc/lib: dummy
+	$(MAKE) linuxsubdirs SUBDIRS=arch/ppc/lib
+
 
 archclean:
-#	@$(MAKEBOOT) clean
-	/bin/rm -f arch/ppc/kernel/*.o arch/ppc/kernel/mk_defs arch/ppc/kernel/ppc_defs.h mm/*.o
-	/bin/rm -f arch/ppc/kernel/*~ arch/ppc/kernel/*~      
+	/bin/rm -f arch/ppc/*/*.o #arch/ppc/kernel/mk_defs arch/ppc/kernel/ppc_defs.h
+	/bin/rm -f arch/ppc/*~ arch/ppc/*/*~ include/asm-ppc/*~ arch/ppc/boot/mkboot
 
 archdep:
-#	@$(MAKEBOOT) dep
 
-
+corttags :
+	etags arch/ppc/*/*.c include/asm-ppc/* drivers/*/*.c net/*.c */*.c

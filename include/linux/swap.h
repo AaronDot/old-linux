@@ -9,16 +9,21 @@
 
 #ifdef __KERNEL__
 
+#include <asm/atomic.h>
+
 #define SWP_USED	1
 #define SWP_WRITEOK	3
 
 #define SWAP_CLUSTER_MAX 32
 
+#define SWAP_MAP_MAX	  0xfffe	/* max val of swapinfo->swap_map[n] */
+#define SWAP_MAP_RESERVED 0xffff	/* max val of swapinfo->swap_map[n] */
+
 struct swap_info_struct {
 	unsigned int flags;
 	kdev_t swap_device;
 	struct inode * swap_file;
-	unsigned char * swap_map;
+	unsigned short * swap_map;
 	unsigned char * swap_lockmap;
 	int lowest_bit;
 	int highest_bit;
@@ -32,7 +37,7 @@ struct swap_info_struct {
 
 extern int nr_swap_pages;
 extern int nr_free_pages;
-extern int nr_async_pages;
+extern atomic_t nr_async_pages;
 extern int min_free_pages;
 extern int free_pages_low;
 extern int free_pages_high;

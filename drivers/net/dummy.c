@@ -58,7 +58,6 @@ static int dummy_xmit(struct sk_buff *skb, struct device *dev);
 static struct enet_statistics *dummy_get_stats(struct device *dev);
 #endif
 
-#ifdef MODULE
 static int dummy_open(struct device *dev)
 {
 	MOD_INC_USE_COUNT;
@@ -70,8 +69,11 @@ static int dummy_close(struct device *dev)
 	MOD_DEC_USE_COUNT;
 	return 0;
 }
-#endif
 
+static int dummy_rebuild(void *eth, struct device *dev, unsigned long raddr, struct sk_buff *skb)
+{
+	return 0;
+}
 
 int dummy_init(struct device *dev)
 {
@@ -89,14 +91,14 @@ int dummy_init(struct device *dev)
 	memset(dev->priv, 0, sizeof(struct enet_statistics));
 	dev->get_stats		= dummy_get_stats;
 #endif
-#ifdef MODULE
-	dev->open = &dummy_open;
-	dev->stop = &dummy_close;
-#endif
+
+	dev->open = dummy_open;
+	dev->stop = dummy_close;
 
 	/* Fill in the fields of the device structure with ethernet-generic values. */
 	ether_setup(dev);
 	dev->flags |= IFF_NOARP;
+	dev->rebuild_header = dummy_rebuild;
 
 	return 0;
 }

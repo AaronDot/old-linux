@@ -235,7 +235,7 @@ typedef struct	SHT
  * Scsi_Host_Template, except that we have one entry for each
  * actual physical host adapter on the system, stored as a linked
  * list.  Note that if there are 2 aha1542 boards, then there will
- * be two Scsi_Host entries, but only 1 Scsi_Host_Template entries.
+ * be two Scsi_Host entries, but only 1 Scsi_Host_Template entry.
  */
 
 struct Scsi_Host
@@ -244,7 +244,7 @@ struct Scsi_Host
     unsigned short extra_bytes;
     volatile unsigned char host_busy;
     char host_no;  /* Used for IOCTL_GET_IDLUN, /proc/scsi et al. */
-    int last_reset;
+    unsigned long last_reset;
     struct wait_queue *host_wait;
     Scsi_Cmnd *host_queue;
     Scsi_Host_Template * hostt;

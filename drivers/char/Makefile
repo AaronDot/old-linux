@@ -40,6 +40,10 @@ endif
 
 ifeq ($(CONFIG_DIGI),y)
 L_OBJS += pcxx.o
+else
+  ifeq ($(CONFIG_DIGI),m)
+  M_OBJS += pcxx.o
+  endif
 endif
 
 ifeq ($(CONFIG_CYCLADES),y)
@@ -71,6 +75,22 @@ L_OBJS += riscom8.o
 else
   ifeq ($(CONFIG_RISCOM8),m)
   M_OBJS += riscom8.o
+  endif
+endif
+
+ifeq ($(CONFIG_SPECIALIX),y)
+L_OBJS += specialix.o
+else
+  ifeq ($(CONFIG_SPECIALIX),m)
+  M_OBJS += specialix.o
+  endif
+endif
+
+ifeq ($(CONFIG_ISI),y)
+L_OBJS += isicom.o
+else
+  ifeq ($(CONFIG_ISI),m)
+  M_OBJS += isicom.o
   endif
 endif
 
@@ -127,10 +147,24 @@ ifeq ($(CONFIG_UMISC),y)
 M = y
 endif
 
-ifdef CONFIG_SOFT_WATCHDOG
-L_OBJS += softdog.o
+ifeq ($(CONFIG_SOFT_WATCHDOG),y)
 M = y
-# This is not modularized, so if configured then "misc.c" will be resident
+L_OBJS += softdog.o
+else
+  ifeq ($(CONFIG_SOFT_WATCHDOG),m)
+  M_OBJS += softdog.o
+  MM = m
+  endif   
+endif
+
+ifeq ($(CONFIG_PCWATCHDOG),y)
+M = y
+L_OBJS += pcwd.o
+else
+  ifeq ($(CONFIG_PCWATCHDOG),m)
+  M_OBJS += pcwd.o
+  MM = m
+  endif
 endif
 
 ifdef CONFIG_SUN_MOUSE
@@ -166,7 +200,11 @@ else
 endif
 
 ifdef CONFIG_APM
-LX_OBJS += apm_bios.o
+M = y
+endif
+
+ifdef CONFIG_H8
+LX_OBJS += h8.o
 M = y
 endif
 
@@ -188,6 +226,9 @@ endif
 
 ifdef CONFIG_TGA_CONSOLE
 L_OBJS += tga.o
+  ifdef CONFIG_VGA_CONSOLE
+    L_OBJS += vga.o vesa_blank.o
+  endif
 else
  ifndef CONFIG_SUN_CONSOLE
  L_OBJS += vga.o vesa_blank.o

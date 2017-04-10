@@ -1,8 +1,8 @@
-/* $Id: icn.h,v 1.13 1996/04/20 16:51:41 fritz Exp $
- *
+/* $Id: icn.h,v 1.26.2.1 1998/11/05 22:13:06 fritz Exp $
+
  * ISDN lowlevel-module for the ICN active ISDN-Card.
  *
- * Copyright 1994 by Fritz Elfert (fritz@wuemaus.franken.de)
+ * Copyright 1994-1998 by Fritz Elfert (fritz@isdn4linux.de)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,9 +16,60 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA. 
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * $Log: icn.h,v $
+ * Revision 1.26.2.1  1998/11/05 22:13:06  fritz
+ * Changed mail-address.
+ *
+ * Revision 1.26  1997/02/14 12:23:16  fritz
+ * Added support for new insmod parameter handling.
+ *
+ * Revision 1.25  1997/02/10 10:10:31  fritz
+ * Changes for Kernel 2.1.X compatibility.
+ * Enhanced initialization, can recover from
+ * misconfiguration by other autoprobing drivers.
+ *
+ * Revision 1.24  1997/01/29 22:34:46  fritz
+ * Cleanup, Corrected D64S setup of 2nd channel.
+ *
+ * Revision 1.23  1996/12/17 18:47:55  tsbogend
+ * changed timeouts from absolute numbers to HZ based values
+ *
+ * Revision 1.22  1996/11/13 02:37:33  fritz
+ * Added delay include.
+ *
+ * Revision 1.21  1996/08/29 20:35:57  fritz
+ * Speed up B-Channel polling interval.
+ *
+ * Revision 1.20  1996/06/24 17:20:37  fritz
+ * Bugfixes in pollbchan_send():
+ *   - Using lock field of skbuff breaks networking.
+ *   - Added channel locking
+ *   - changed dequeuing scheme.
+ * Eliminated misc. compiler warnings.
+ *
+ * Revision 1.19  1996/06/06 13:58:35  fritz
+ * Changed code to be architecture independent
+ *
+ * Revision 1.18  1996/06/03 19:59:30  fritz
+ * Removed include of config.h
+ *
+ * Revision 1.17  1996/05/18 00:47:04  fritz
+ * Removed callback debug code.
+ *
+ * Revision 1.16  1996/05/17 15:46:43  fritz
+ * Removed own queue management.
+ * Changed queue management to use sk_buffs.
+ *
+ * Revision 1.15  1996/05/02 04:01:57  fritz
+ * Removed ICN_MAXCARDS
+ *
+ * Revision 1.14  1996/05/02 00:40:29  fritz
+ * Major rewrite to support more than one card
+ * with a single module.
+ * Support for new firmware.
+ *
  * Revision 1.13  1996/04/20 16:51:41  fritz
  * Increased status buffer.
  * Misc. typos
@@ -75,6 +126,14 @@
 #define ICN_IOCTL_LEASEDCFG 6
 #define ICN_IOCTL_GETDOUBLE 7
 #define ICN_IOCTL_DEBUGVAR  8
+#define ICN_IOCTL_ADDCARD   9
+
+/* Struct for adding new cards */
+typedef struct icn_cdef {
+	int port;
+	char id1[10];
+	char id2[10];
+} icn_cdef;
 
 #if defined(__KERNEL__) || defined(__DEBUGVAR__)
 
@@ -96,9 +155,10 @@
 #include <linux/ioport.h>
 #include <linux/timer.h>
 #include <linux/wait.h>
+#include <linux/delay.h>
 #include <linux/isdnif.h>
 
-#endif				/* __KERNEL__ */
+#endif                          /* __KERNEL__ */
 
 /* some useful macros for debugging */
 #ifdef ICN_DEBUG_PORT
@@ -112,44 +172,45 @@
 #define ICN_PORTLEN (0x04)
 #define ICN_MEMADDR 0x0d0000
 
-/* Macros for accessing ports */
-#define ICN_CFG    (dev->port)
-#define ICN_MAPRAM (dev->port+1)
-#define ICN_RUN    (dev->port+2)
-#define ICN_BANK   (dev->port+3)
+#define ICN_FLAGS_B1ACTIVE 1    /* B-Channel-1 is open                     */
+#define ICN_FLAGS_B2ACTIVE 2    /* B-Channel-2 is open                     */
+#define ICN_FLAGS_RUNNING  4    /* Cards driver activated                  */
+#define ICN_FLAGS_RBTIMER  8    /* cyclic scheduling of B-Channel-poll     */
 
-#define ICN_FLAGS_B1ACTIVE 1	/* B-Channel-1 is open                 */
-#define ICN_FLAGS_B2ACTIVE 2	/* B-Channel-2 is open                 */
-#define ICN_FLAGS_RBTIMER  8	/* cyclic scheduling of B-Channel-poll */
+#define ICN_BOOT_TIMEOUT1  (HZ) /* Delay for Boot-download (jiffies)       */
+#define ICN_CHANLOCK_DELAY (HZ/10)	/* Delay for Channel-mapping (jiffies)     */
 
-#define ICN_BOOT_TIMEOUT1  100	/* Delay for Boot-download (jiffies)   */
-#define ICN_CHANLOCK_DELAY  10	/* Delay for Channel-mapping (jiffies) */
+#define ICN_TIMER_BCREAD (HZ/100)	/* B-Channel poll-cycle                    */
+#define ICN_TIMER_DCREAD (HZ/2) /* D-Channel poll-cycle                    */
 
-#define ICN_TIMER_BCREAD 3	/* B-Channel poll-cycle                */
-#define ICN_TIMER_DCREAD 50	/* D-Channel poll-cycle                */
+#define ICN_CODE_STAGE1 4096    /* Size of bootcode                        */
+#define ICN_CODE_STAGE2 65536   /* Size of protocol-code                   */
 
-#define ICN_CODE_STAGE1 4096	/* Size of bootcode                    */
-#define ICN_CODE_STAGE2 65536	/* Size of protocol-code               */
-
-#define ICN_MAX_SQUEUE 65536	/* Max. outstanding send-data          */
-#define ICN_FRAGSIZE (250)	/* Max. size of send-fragments         */
-#define ICN_BCH 2		/* Number of supported channels        */
+#define ICN_MAX_SQUEUE 8000     /* Max. outstanding send-data (2* hw-buf.) */
+#define ICN_FRAGSIZE (250)      /* Max. size of send-fragments             */
+#define ICN_BCH 2               /* Number of supported channels per card   */
 
 /* type-definitions for accessing the mmap-io-areas */
 
-#define SHM_DCTL_OFFSET (0)	/* Offset to data-controlstructures in shm */
-#define SHM_CCTL_OFFSET (0x1d2)	/* Offset to comm-controlstructures in shm */
-#define SHM_CBUF_OFFSET (0x200)	/* Offset to comm-buffers in shm           */
+#define SHM_DCTL_OFFSET (0)     /* Offset to data-controlstructures in shm */
+#define SHM_CCTL_OFFSET (0x1d2) /* Offset to comm-controlstructures in shm */
+#define SHM_CBUF_OFFSET (0x200) /* Offset to comm-buffers in shm           */
 #define SHM_DBUF_OFFSET (0x2000)	/* Offset to data-buffers in shm           */
 
+/*
+ * Layout of card's data buffers
+ */
 typedef struct {
-	unsigned char length;	/* Bytecount of fragment (max 250)     */
-	unsigned char endflag;	/* 0=last frag., 0xff=frag. continued  */
-	unsigned char data[ICN_FRAGSIZE];	/* The data                            */
+	unsigned char length;   /* Bytecount of fragment (max 250)    */
+	unsigned char endflag;  /* 0=last frag., 0xff=frag. continued */
+	unsigned char data[ICN_FRAGSIZE];	/* The data                           */
 	/* Fill to 256 bytes */
 	char unused[0x100 - ICN_FRAGSIZE - 2];
 } frag_buf;
 
+/*
+ * Layout of card's shared memory
+ */
 typedef union {
 	struct {
 		unsigned char scns;	/* Index to free SendFrag.             */
@@ -178,110 +239,143 @@ typedef union {
 	} data_buffers;
 } icn_shmem;
 
-/* Sendbuffer-queue-element */
-typedef struct {
-	char *next;
-	short length;
-	short size;
-	u_char *rptr;
-	u_char buffer[1];
-} pqueue;
-
-typedef struct {
-	unsigned short port;	/* Base-port-address                */
-	icn_shmem *shmem;	/* Pointer to memory-mapped-buffers */
-	int myid;		/* Driver-Nr. assigned by linklevel */
-	int rvalid;		/* IO-portregion has been requested */
-	int mvalid;		/* IO-shmem has been requested      */
-	int leased;		/* Flag: This Adapter is connected  */
+/*
+ * Per card driver data
+ */
+typedef struct icn_card {
+	struct icn_card *next;  /* Pointer to next device struct    */
+	struct icn_card *other; /* Pointer to other card for ICN4B  */
+	unsigned short port;    /* Base-port-address                */
+	int myid;               /* Driver-Nr. assigned by linklevel */
+	int rvalid;             /* IO-portregion has been requested */
+	int leased;             /* Flag: This Adapter is connected  */
 	/*       to a leased line           */
-	unsigned short flags;	/* Statusflags                      */
-	int doubleS0;		/* Flag: Double-S0-Card             */
-	int secondhalf;		/* Flag: Second half of a doubleS0  */
-	int ptype;		/* Protocol type (1TR6 or Euro)     */
+	unsigned short flags;   /* Statusflags                      */
+	int doubleS0;           /* Flag: ICN4B                      */
+	int secondhalf;         /* Flag: Second half of a doubleS0  */
+	int fw_rev;             /* Firmware revision loaded         */
+	int ptype;              /* Protocol type (1TR6 or Euro)     */
 	struct timer_list st_timer;	/* Timer for Status-Polls           */
 	struct timer_list rb_timer;	/* Timer for B-Channel-Polls        */
-	int channel;		/* Currently mapped Channel         */
-	int chanlock;		/* Semaphore for Channel-Mapping    */
-	u_char rcvbuf[ICN_BCH][4096];	/* B-Channel-Receive-Buffers      */
-	int rcvidx[ICN_BCH];	/* Index for above buffers          */
-	int l2_proto[ICN_BCH];	/* Current layer-2-protocol         */
-	isdn_if interface;	/* Interface to upper layer         */
-	int iptr;		/* Index to imsg-buffer             */
-	char imsg[60];		/* Internal buf for status-parsing  */
-	char msg_buf[2048];	/* Buffer for status-messages       */
-	char *msg_buf_write;	/* Writepointer for statusbuffer    */
-	char *msg_buf_read;	/* Readpointer for statusbuffer     */
-	char *msg_buf_end;	/* Pointer to end of statusbuffer   */
-	int sndcount[ICN_BCH];	/* Byte-counters for B-Ch.-send     */
-	pqueue *spqueue[ICN_BCH];	/* Pointers to start of Send-Queue  */
-#ifdef DEBUG_RCVCALLBACK
-	int akt_pending[ICN_BCH];
-	int max_pending[ICN_BCH];
-#endif
+	u_char rcvbuf[ICN_BCH][4096];	/* B-Channel-Receive-Buffers        */
+	int rcvidx[ICN_BCH];    /* Index for above buffers          */
+	int l2_proto[ICN_BCH];  /* Current layer-2-protocol         */
+	isdn_if interface;      /* Interface to upper layer         */
+	int iptr;               /* Index to imsg-buffer             */
+	char imsg[60];          /* Internal buf for status-parsing  */
+	char msg_buf[2048];     /* Buffer for status-messages       */
+	char *msg_buf_write;    /* Writepointer for statusbuffer    */
+	char *msg_buf_read;     /* Readpointer for statusbuffer     */
+	char *msg_buf_end;      /* Pointer to end of statusbuffer   */
+	int sndcount[ICN_BCH];  /* Byte-counters for B-Ch.-send     */
+	struct sk_buff_head
+	 spqueue[ICN_BCH];      /* Sendqueue                        */
+	char regname[35];       /* Name used for request_region     */
+	u_char xmit_lock[ICN_BCH];	/* Semaphore for pollbchan_send()   */
+} icn_card;
+
+/*
+ * Main driver data
+ */
+typedef struct icn_dev {
+	icn_shmem *shmem;       /* Pointer to memory-mapped-buffers */
+	int mvalid;             /* IO-shmem has been requested      */
+	int channel;            /* Currently mapped channel         */
+	struct icn_card *mcard; /* Currently mapped card            */
+	int chanlock;           /* Semaphore for channel-mapping    */
+	int firstload;          /* Flag: firmware never loaded      */
 } icn_dev;
 
 typedef icn_dev *icn_devptr;
 
 #ifdef __KERNEL__
-static icn_dev *dev = (icn_dev *) 0;
-static icn_dev *dev2 = (icn_dev *) 0;
+
+static icn_card *cards = (icn_card *) 0;
+static u_char chan2bank[] =
+{0, 4, 8, 12};                  /* for icn_map_channel() */
+
+static icn_dev dev;
 
 /* With modutils >= 1.1.67 Integers can be changed while loading a
  * module. For this reason define the Port-Base an Shmem-Base as
  * integers.
  */
-int portbase = ICN_BASEADDR;
-int membase = ICN_MEMADDR;
-char *icn_id = "\0";
-char *icn_id2 = "\0";
-static char regname[35];	/* Name used for port/mem-registration */
+static int portbase = ICN_BASEADDR;
+static int membase = ICN_MEMADDR;
+static char *icn_id = "\0";
+static char *icn_id2 = "\0";
 
-#endif				/* __KERNEL__ */
+#ifdef MODULE
+#if (LINUX_VERSION_CODE > 0x020111)
+MODULE_AUTHOR("Fritz Elfert");
+MODULE_PARM(portbase, "i");
+MODULE_PARM_DESC(portbase, "Port adress of first card");
+MODULE_PARM(membase, "i");
+MODULE_PARM_DESC(membase, "Shared memory adress of all cards");
+MODULE_PARM(icn_id, "s");
+MODULE_PARM_DESC(icn_id, "ID-String of first card");
+MODULE_PARM(icn_id2, "s");
+MODULE_PARM_DESC(icn_id2, "ID-String of first card, second S0 (4B only)");
+#endif
+#endif
+
+#endif                          /* __KERNEL__ */
 
 /* Utility-Macros */
 
+/* Macros for accessing ports */
+#define ICN_CFG    (card->port)
+#define ICN_MAPRAM (card->port+1)
+#define ICN_RUN    (card->port+2)
+#define ICN_BANK   (card->port+3)
+
 /* Return true, if there is a free transmit-buffer */
-#define sbfree (((dev->shmem->data_control.scns+1) & 0xf) != \
-                dev->shmem->data_control.scnr)
+#define sbfree (((readb(&dev.shmem->data_control.scns)+1) & 0xf) != \
+		readb(&dev.shmem->data_control.scnr))
 
 /* Switch to next transmit-buffer */
-#define sbnext (dev->shmem->data_control.scns = \
-               ((dev->shmem->data_control.scns+1) & 0xf))
+#define sbnext (writeb((readb(&dev.shmem->data_control.scns)+1) & 0xf, \
+		       &dev.shmem->data_control.scns))
 
 /* Shortcuts for transmit-buffer-access */
-#define sbuf_n dev->shmem->data_control.scns
-#define sbuf_d dev->shmem->data_buffers.send_buf[sbuf_n].data
-#define sbuf_l dev->shmem->data_buffers.send_buf[sbuf_n].length
-#define sbuf_f dev->shmem->data_buffers.send_buf[sbuf_n].endflag
+#define sbuf_n dev.shmem->data_control.scns
+#define sbuf_d dev.shmem->data_buffers.send_buf[readb(&sbuf_n)].data
+#define sbuf_l dev.shmem->data_buffers.send_buf[readb(&sbuf_n)].length
+#define sbuf_f dev.shmem->data_buffers.send_buf[readb(&sbuf_n)].endflag
 
 /* Return true, if there is receive-data is available */
-#define rbavl  (dev->shmem->data_control.ecnr != \
-                dev->shmem->data_control.ecns)
+#define rbavl  (readb(&dev.shmem->data_control.ecnr) != \
+		readb(&dev.shmem->data_control.ecns))
 
 /* Switch to next receive-buffer */
-#define rbnext (dev->shmem->data_control.ecnr = \
-               ((dev->shmem->data_control.ecnr+1) & 0xf))
+#define rbnext (writeb((readb(&dev.shmem->data_control.ecnr)+1) & 0xf, \
+		       &dev.shmem->data_control.ecnr))
 
 /* Shortcuts for receive-buffer-access */
-#define rbuf_n dev->shmem->data_control.ecnr
-#define rbuf_d dev->shmem->data_buffers.receive_buf[rbuf_n].data
-#define rbuf_l dev->shmem->data_buffers.receive_buf[rbuf_n].length
-#define rbuf_f dev->shmem->data_buffers.receive_buf[rbuf_n].endflag
+#define rbuf_n dev.shmem->data_control.ecnr
+#define rbuf_d dev.shmem->data_buffers.receive_buf[readb(&rbuf_n)].data
+#define rbuf_l dev.shmem->data_buffers.receive_buf[readb(&rbuf_n)].length
+#define rbuf_f dev.shmem->data_buffers.receive_buf[readb(&rbuf_n)].endflag
 
 /* Shortcuts for command-buffer-access */
-#define cmd_o (dev->shmem->comm_control.pcio_o)
-#define cmd_i (dev->shmem->comm_control.pcio_i)
+#define cmd_o (dev.shmem->comm_control.pcio_o)
+#define cmd_i (dev.shmem->comm_control.pcio_i)
 
 /* Return free space in command-buffer */
-#define cmd_free ((cmd_i>=cmd_o)?0x100-cmd_i+cmd_o:cmd_o-cmd_i)
+#define cmd_free ((readb(&cmd_i)>=readb(&cmd_o))? \
+		  0x100-readb(&cmd_i)+readb(&cmd_o): \
+		  readb(&cmd_o)-readb(&cmd_i))
 
 /* Shortcuts for message-buffer-access */
-#define msg_o (dev->shmem->comm_control.iopc_o)
-#define msg_i (dev->shmem->comm_control.iopc_i)
+#define msg_o (dev.shmem->comm_control.iopc_o)
+#define msg_i (dev.shmem->comm_control.iopc_i)
 
 /* Return length of Message, if avail. */
-#define msg_avail ((msg_o>msg_i)?0x100-msg_o+msg_i:msg_i-msg_o)
+#define msg_avail ((readb(&msg_o)>readb(&msg_i))? \
+		   0x100-readb(&msg_o)+readb(&msg_i): \
+		   readb(&msg_i)-readb(&msg_o))
+
+#define CID (card->interface.id)
 
 #define MIN(a,b) ((a<b)?a:b)
 #define MAX(a,b) ((a>b)?a:b)
@@ -294,5 +388,5 @@ static char regname[35];	/* Name used for port/mem-registration */
 #define release_shmem release_region
 #define request_shmem request_region
 
-#endif				/* defined(__KERNEL__) || defined(__DEBUGVAR__) */
-#endif				/* icn_h */
+#endif                          /* defined(__KERNEL__) || defined(__DEBUGVAR__) */
+#endif                          /* icn_h */

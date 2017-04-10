@@ -1,0 +1,2479 @@
+From af7d79d57ab2c5c9f81c45afa124abdeda391773 Mon Sep 17 00:00:00 2001
+From: Eric Zhou <zhoubb.eric@gmail.com>
+Date: Tue, 22 Apr 2014 10:08:30 +0800
+Subject: [PATCH 5/6] The old Linux version is 0.95a
+
+Signed-off-by: Aaron Chou <zhoubb.aaron@gmail.com>
+---
+ Makefile                   |  18 ++--
+ boot/head.s                |   6 +-
+ boot/setup.S               |  27 +++++-
+ fs/block_dev.c             |  10 +-
+ fs/buffer.c                |   9 +-
+ fs/fasterdisk.pat          | 152 ++++++++++++++++++++++++++++++
+ fs/inode.c                 |   4 +-
+ fs/minix/file_dev.c        |  11 +--
+ fs/minix/truncate.c        |   2 +
+ fs/select.c                |  64 +++++++++----
+ include/asm/io.h           |  10 +-
+ include/asm/segment.h      |  38 ++++++++
+ include/fcntl.h            |   2 +-
+ include/linux/config.h     |   2 +-
+ include/linux/fs.h         |   2 +-
+ include/linux/hdreg.h      |  16 ++--
+ include/linux/sched.h      |   6 +-
+ include/linux/timer.h      |   5 +
+ include/linux/tty.h        |  19 +++-
+ include/termios.h          |   2 -
+ init/main.c                |   1 +
+ kernel/blk_drv/blk.h       |  23 ++---
+ kernel/blk_drv/floppy.c    |  88 +++++++++++------
+ kernel/blk_drv/hd.c        |  61 ++++++++----
+ kernel/chr_drv/console.c   | 230 ++++++++++++++++-----------------------------
+ kernel/chr_drv/keyboard.S  |  64 ++++++-------
+ kernel/chr_drv/rs_io.s     |  49 ++++++----
+ kernel/chr_drv/serial.c    |  62 +++++++++++-
+ kernel/chr_drv/tty_io.c    |  73 +++++++++-----
+ kernel/chr_drv/tty_ioctl.c |  13 ++-
+ kernel/exit.c              |   2 +-
+ mm/Makefile                |   2 -
+ mm/memory.c                |  25 ++++-
+ mm/swap.c                  |  51 +++++-----
+ 34 files changed, 765 insertions(+), 384 deletions(-)
+ create mode 100644 fs/fasterdisk.pat
+
+diff --git a/Makefile b/Makefile
+index 575e00c..d2a6b48 100644
+--- a/Makefile
++++ b/Makefile
+@@ -61,28 +61,28 @@ tools/system:	boot/head.o init/main.o \
+ 	$(LIBS) \
+ 	-o tools/system > System.map
+ 
+-kernel/math/math.a:
++kernel/math/math.a: dummy
+ 	(cd kernel/math; make)
+ 
+-kernel/blk_drv/blk_drv.a:
++kernel/blk_drv/blk_drv.a: dummy
+ 	(cd kernel/blk_drv; make)
+ 
+-kernel/chr_drv/chr_drv.a:
++kernel/chr_drv/chr_drv.a: dummy
+ 	(cd kernel/chr_drv; make)
+ 
+-kernel/kernel.o:
++kernel/kernel.o: dummy
+ 	(cd kernel; make)
+ 
+-mm/mm.o:
++mm/mm.o: dummy
+ 	(cd mm; make)
+ 
+-fs/fs.o:
++fs/fs.o: dummy
+ 	(cd fs; make)
+ 
+-fs/minix/minix.o:
++fs/minix/minix.o: dummy
+ 	(cd fs/minix; make)
+ 
+-lib/lib.a:
++lib/lib.a: dummy
+ 	(cd lib; make)
+ 
+ boot/setup: boot/setup.s
+@@ -120,6 +120,8 @@ dep:
+ 	(cd kernel; make dep)
+ 	(cd mm; make dep)
+ 
++dummy:
++
+ ### Dependencies:
+ init/main.o : init/main.c include/unistd.h include/sys/stat.h \
+   include/sys/types.h include/sys/time.h include/time.h include/sys/times.h \
+diff --git a/boot/head.s b/boot/head.s
+index db6cc60..f72559c 100644
+--- a/boot/head.s
++++ b/boot/head.s
+@@ -164,12 +164,12 @@ _floppy_track_buffer:
+ 	.fill 512*2*18,1,0
+ 
+ after_page_tables:
++	call	setup_paging
+ 	pushl	$0		# These are the parameters to main :-)
+ 	pushl	$0
+ 	pushl	$0
+-	pushl	$L6		# return address for main, if it decides to.
+-	pushl	$_main
+-	jmp	setup_paging
++	cld			# gcc2 wants the direction flag cleared at all times
++	call	_start_kernel
+ L6:
+ 	jmp	L6		# main should never return here, but
+ 				# just in case, we know what happens.
+diff --git a/boot/setup.S b/boot/setup.S
+index 0192be5..b00251a 100644
+--- a/boot/setup.S
++++ b/boot/setup.S
+@@ -43,6 +43,12 @@ start:
+ 	int	0x15
+ 	mov	[2],ax
+ 
++! set the keyboard repeat rate to the max
++
++	mov	ax,#0x0305
++	mov	bx,#0x0000
++	int	0x16
++
+ ! check for EGA/VGA and some config parameters
+ 
+ 	mov	ah,#0x12
+@@ -498,8 +504,25 @@ nozero:	sub	al,#0x80
+ 	lodsw
+ 	pop	ds
+ 	ret
+-novid7:	pop	ds	! Here could be code to support standard 80x50,80x30
+-	mov	ax,#0x5019
++novid7:
++	mov	ax,#0x1112
++	mov	bl,#0
++	int	0x10		! use 8x8 font set (50 lines on VGA)
++
++	mov	ax,#0x1200
++	mov	bl,#0x20
++	int	0x10		! use alternate print screen
++
++	mov	ax,#0x1201
++	mov	bl,#0x34
++	int	0x10		! turn off cursor emulation
++
++	mov	ah,#0x01
++	mov	cx,#0x0607
++	int	0x10		! turn on cursor (scan lines 6 to 7)
++
++	pop	ds
++	mov	ax,#0x5032	! return 80x50
+ 	ret
+ 
+ ! Routine that 'tabs' to next col.
+diff --git a/fs/block_dev.c b/fs/block_dev.c
+index e4a4e9e..cca44d3 100644
+--- a/fs/block_dev.c
++++ b/fs/block_dev.c
+@@ -47,8 +47,9 @@ int block_write(struct inode * inode, struct file * filp, char * buf, int count)
+ 		filp->f_pos += chars;
+ 		written += chars;
+ 		count -= chars;
+-		while (chars-->0)
+-			*(p++) = get_fs_byte(buf++);
++		memcpy_fromfs(p,buf,chars);
++		p += chars;
++		buf += chars;
+ 		bh->b_dirt = 1;
+ 		brelse(bh);
+ 	}
+@@ -85,8 +86,9 @@ int block_read(struct inode * inode, struct file * filp, char * buf, int count)
+ 		filp->f_pos += chars;
+ 		read += chars;
+ 		count -= chars;
+-		while (chars-->0)
+-			put_fs_byte(*(p++),buf++);
++		memcpy_tofs(buf,p,chars);
++		p += chars;
++		buf += chars;
+ 		brelse(bh);
+ 	}
+ 	return read;
+diff --git a/fs/buffer.c b/fs/buffer.c
+index b8aa343..6ce1bef 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -109,10 +109,15 @@ void inline invalidate_buffers(int dev)
+ void check_disk_change(int dev)
+ {
+ 	int i;
++	struct buffer_head * bh;
+ 
+ 	if (MAJOR(dev) != 2)
+ 		return;
+-	if (!floppy_change(dev & 0x03))
++	if (!(bh = getblk(dev,0)))
++		return;
++	i = floppy_change(bh);
++	brelse(bh);
++	if (!i)
+ 		return;
+ 	for (i=0 ; i<NR_SUPER ; i++)
+ 		if (super_block[i].s_dev == dev)
+@@ -422,5 +427,5 @@ void buffer_init(long buffer_end)
+ 	free_list->b_prev_free = h;
+ 	h->b_next_free = free_list;
+ 	for (i=0;i<NR_HASH;i++)
+-		hash_table[i]=NULL;
++		hash_table[i] = NULL;
+ }
+diff --git a/fs/fasterdisk.pat b/fs/fasterdisk.pat
+new file mode 100644
+index 0000000..85b2d44
+--- /dev/null
++++ b/fs/fasterdisk.pat
+@@ -0,0 +1,152 @@
++From kwhite@csi.uottawa.ca Sun Mar 15 20:01:06 1992
++Received: from klaava.Helsinki.FI by kruuna.helsinki.fi with SMTP id AA04345
++  (5.65c/IDA-1.4.4 for <torvalds@klaava.Helsinki.FI>); Sun, 15 Mar 1992 20:00:45 +0200
++Received: from csi.UOttawa.CA (csi0.csi.uottawa.ca) by klaava.Helsinki.FI (4.1/SMI-4.1)
++	id AA21712; Sun, 15 Mar 92 20:00:40 +0200
++Received: by csi.UOttawa.CA id AA00608
++  (5.65+/IDA-1.3.5 for torvalds@klaava.helsinki.fi); Sun, 15 Mar 92 12:57:47 -0500
++From: Keith White <kwhite@csi.uottawa.ca>
++Message-Id: <9203151757.AA00608@csi.UOttawa.CA>
++Subject: reset-floppy fixed, double your disk speed (linux 0.95)
++To: torvalds@cc.helsinki.fi (Linus Torvalds)
++Date: Sun, 15 Mar 92 12:57:46 EST
++X-Mailer: ELM [version 2.3 PL11]
++Status: OR
++
++A couple of things.
++
++1) I must be one of those lucky few who's been able to use linux0.95.
++However I was surprised to see that hard disk speed was slower.  This
++was until I remembered that I had patched fs/block_dev.c and
++include/asm/segment.h to support block moves to and from the fs
++segment.  These patches (very minimal it must be admitted) give a
++reasonable increase in speed for 'fsck':
++	original:	42.62 elapsed
++	patched:	22.06 elapsed
++These patches have no effect on sequential disk access (dd if=/dev/hda
++...)  since most time is spent waiting for those small 2 sector
++transfers anyway.  The patches are included below.
++
++2) I don't run DOS so a floppy disk format program is sort of
++essential.  Lawrence Foard's (sp?) formatting routines have a few
++problems (nits).
++	a) The inter-sector gap should be larger for a format than it
++is for a read or write.
++	b) An interleave is not required (at least on my machine, a
++bottom of the line 386SX-16).
++
++3) I seem to have fixed the dreaded "reset-floppy called" problem --
++at least it works for me.  The posted fix does not work in my case.
++I'd send you these patches as well, but I only have diffs that include
++all the mods I did for the floppy format stuff.  The key point (I
++think) was to only reset twice during an error loop.  If a track was
++bad, the recalibrate would fail and call reset which would call
++recalibrate ...  If you're interested, I could try to separate the
++formatting stuff and all my debugging "printks" from the reset fix
++stuff and send the diffs.
++
++...keith (kwhite@csi.uottawa.ca)
++
++---cut here---
++*** 1.1	1992/03/14 16:33:21
++--- include/asm/segment.h	1992/03/15 17:10:14
++***************
++*** 63,65 ****
++--- 63,109 ----
++	__asm__("mov %0,%%fs"::"r" ((unsigned short) val));
++  }
++
+++ /*
+++  * these routines are added to use the movs instruction with data
+++  * in the fs segment.  No optimizations are done with regards to using
+++  * movsw or movsd
+++  *
+++  * kwhite@csi.uottawa.ca
+++  */
+++
+++ #define memcpy_fromfs(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; movl %%ax,%%ds\n\
+++ 	cld; rep; movsb\n\
+++ 	mov %%es,%%ax; mov %%ax,%%ds" \
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
+++ #define memcpy_fromfs_w(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; movl %%ax,%%ds\n\
+++ 	cld; rep; movsw\n\
+++ 	mov %%es,%%ax; mov %%ax,%%ds" \
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
+++ #define memcpy_fromfs_l(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; movl %%ax,%%ds\n\
+++ 	cld; rep; movsl\n\
+++ 	mov %%es,%%ax; mov %%ax,%%ds" \
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
+++ #define memcpy_tofs(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; mov %%ax,%%es\n\
+++ 	cld; rep; movsb\n\
+++ 	mov %%ds,%%ax; mov %%ax,%%es" \
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
+++ #define memcpy_tofs_w(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; mov %%ax,%%es\n\
+++ 	cld; rep; movsw\n\
+++ 	mov %%ds,%%ax; mov %%ax,%%es" \
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
+++ #define memcpy_tofs_l(dest,src,n) __asm__ (\
+++ 	"mov %%fs,%%ax; mov %%ax,%%es\n\
+++ 	cld; rep; movsl\n\
+++ 	mov %%ds,%%ax; mov %%ax,%%es"\
+++ 	::"D" ((long)(dest)), "S" ((long)(src)), "c" ((long) (n)) \
+++ 	:"di", "si", "cx", "ax");
++*** 1.1	1992/03/14 16:37:10
++--- fs/block_dev.c	1992/03/14 16:38:26
++***************
++*** 47,54 ****
++--- 47,64 ----
++		filp->f_pos += chars;
++		written += chars;
++		count -= chars;
+++ #ifdef notdef
++		while (chars-->0)
++			*(p++) = get_fs_byte(buf++);
+++ #else
+++ 		if ((chars&1) || ((long)p&1) || ((long)buf&1)) {
+++ 			memcpy_fromfs(p, buf, chars);
+++ 		}
+++ 		else {
+++ 			memcpy_fromfs_w(p, buf, chars>>1);
+++ 		}
+++ 		p += chars; buf += chars; chars = 0;
+++ #endif
++		bh->b_dirt = 1;
++		brelse(bh);
++	}
++***************
++*** 85,92 ****
++--- 95,112 ----
++		filp->f_pos += chars;
++		read += chars;
++		count -= chars;
+++ #ifdef notdef
++		while (chars-->0)
++			put_fs_byte(*(p++),buf++);
+++ #else
+++ 		if ((chars&1) || ((long)buf&1) || ((long)p&1)) {
+++ 			memcpy_tofs(buf, p, chars);
+++ 		}
+++ 		else {
+++ 			memcpy_tofs_w(buf, p, chars>>1);
+++ 		}
+++ 		p += chars; buf += chars; chars = 0;
+++ #endif
++		brelse(bh);
++	}
++	return read;
++---cut here---
++
++--
++BITNET:		kwhite@uotcsi2.bitnet (being phased out)
++UUCP:		{...,nrcaer,cunews}!uotcsi2!kwhite
++INTERNET:	kwhite@csi.uottawa.ca
+diff --git a/fs/inode.c b/fs/inode.c
+index dd68b1d..7173e23 100644
+--- a/fs/inode.c
++++ b/fs/inode.c
+@@ -73,8 +73,10 @@ void invalidate_inodes(int dev)
+ 	for(i=0 ; i<NR_INODE ; i++,inode++) {
+ 		wait_on_inode(inode);
+ 		if (inode->i_dev == dev) {
+-			if (inode->i_count)
++			if (inode->i_count) {
+ 				printk("inode in use on removed disk\n\r");
++				continue;
++			}
+ 			inode->i_dev = inode->i_dirt = 0;
+ 		}
+ 	}
+diff --git a/fs/minix/file_dev.c b/fs/minix/file_dev.c
+index 646ba0e..d9d1fb9 100644
+--- a/fs/minix/file_dev.c
++++ b/fs/minix/file_dev.c
+@@ -39,9 +39,8 @@ int minix_file_read(struct inode * inode, struct file * filp, char * buf, int co
+ 		left -= chars;
+ 		read += chars;
+ 		if (bh) {
+-			char * p = nr + bh->b_data;
+-			while (chars-->0)
+-				put_fs_byte(*(p++),buf++);
++			memcpy_tofs(buf,nr+bh->b_data,chars);
++			buf += chars;
+ 			brelse(bh);
+ 		} else {
+ 			while (chars-->0)
+@@ -81,7 +80,6 @@ int minix_file_write(struct inode * inode, struct file * filp, char * buf, int c
+ 		}
+ 		c = pos % BLOCK_SIZE;
+ 		p = c + bh->b_data;
+-		bh->b_dirt = 1;
+ 		c = BLOCK_SIZE-c;
+ 		if (c > count-written)
+ 			c = count-written;
+@@ -91,8 +89,9 @@ int minix_file_write(struct inode * inode, struct file * filp, char * buf, int c
+ 			inode->i_dirt = 1;
+ 		}
+ 		written += c;
+-		while (c-->0)
+-			*(p++) = get_fs_byte(buf++);
++		memcpy_fromfs(p,buf,c);
++		buf += c;
++		bh->b_dirt = 1;
+ 		brelse(bh);
+ 	}
+ 	inode->i_mtime = CURRENT_TIME;
+diff --git a/fs/minix/truncate.c b/fs/minix/truncate.c
+index 4f163bd..ab72736 100644
+--- a/fs/minix/truncate.c
++++ b/fs/minix/truncate.c
+@@ -135,6 +135,8 @@ static int check_char_dev(struct inode * inode, struct file * filp)
+ 			tty->session= current->session;
+ 			tty->pgrp = current->pgrp;
+ 		}
++		if (IS_A_SERIAL(min))
++			serial_open(min-64);
+ 	}
+ 	return 0;
+ }
+diff --git a/fs/select.c b/fs/select.c
+index 053b1ab..e5d1439 100644
+--- a/fs/select.c
++++ b/fs/select.c
+@@ -39,11 +39,15 @@ typedef struct {
+ 	struct task_struct ** wait_address;
+ } wait_entry;
+ 
+-typedef struct {
+-	int nr;
++typedef struct select_table_struct {
++	int nr, woken;
++	struct task_struct * current;
++	struct select_table_struct * next_table;
+ 	wait_entry entry[NR_OPEN*3];
+ } select_table;
+ 
++static select_table * sel_tables = NULL;
++
+ static void add_wait(struct task_struct ** wait_address, select_table * p)
+ {
+ 	int i;
+@@ -53,32 +57,52 @@ static void add_wait(struct task_struct ** wait_address, select_table * p)
+ 	for (i = 0 ; i < p->nr ; i++)
+ 		if (p->entry[i].wait_address == wait_address)
+ 			return;
++	current->next_wait = NULL;
+ 	p->entry[p->nr].wait_address = wait_address;
+-	p->entry[p->nr].old_task = * wait_address;
++	p->entry[p->nr].old_task = *wait_address;
+ 	*wait_address = current;
+ 	p->nr++;
+ }
+ 
+-static void free_wait(select_table * p)
++/*
++ * free_wait removes the current task from any wait-queues and then
++ * wakes up the queues.
++ */
++static void free_one_table(select_table * p)
+ {
+ 	int i;
+ 	struct task_struct ** tpp;
+ 
++	for(tpp = &LAST_TASK ; tpp > &FIRST_TASK ; --tpp)
++		if (*tpp && ((*tpp)->next_wait == p->current))
++			(*tpp)->next_wait = NULL;
++	if (!p->nr)
++		return;
+ 	for (i = 0; i < p->nr ; i++) {
+-		tpp = p->entry[i].wait_address;
+-		while (*tpp && *tpp != current) {
+-			(*tpp)->state = 0;
+-			current->state = TASK_UNINTERRUPTIBLE;
+-			schedule();
+-		}
+-		if (!*tpp)
+-			printk("free_wait: NULL");
+-		if (*tpp = p->entry[i].old_task)
+-			(**tpp).state = 0;
++		wake_up(p->entry[i].wait_address);
++		wake_up(&p->entry[i].old_task);
+ 	}
+ 	p->nr = 0;
+ }
+ 
++static void free_wait(select_table * p)
++{
++	select_table * tmp;
++
++	if (p->woken)
++		return;
++	p = sel_tables;
++	sel_tables = NULL;
++	while (p) {
++		wake_up(&p->current);
++		p->woken = 1;
++		tmp = p->next_table;
++		p->next_table = NULL;
++		free_one_table(p);
++		p = tmp;
++	}
++}
++
+ static struct tty_struct * get_tty(struct inode * inode)
+ {
+ 	int major, minor;
+@@ -177,6 +201,10 @@ int do_select(fd_set in, fd_set out, fd_set ex,
+ 	}
+ repeat:
+ 	wait_table.nr = 0;
++	wait_table.woken = 0;
++	wait_table.current = current;
++	wait_table.next_table = sel_tables;
++	sel_tables = &wait_table;
+ 	*inp = *outp = *exp = 0;
+ 	count = 0;
+ 	mask = 1;
+@@ -200,7 +228,9 @@ repeat:
+ 	if (!(current->signal & ~current->blocked) &&
+ 	    current->timeout && !count) {
+ 		current->state = TASK_INTERRUPTIBLE;
++		sti();
+ 		schedule();
++		cli();
+ 		free_wait(&wait_table);
+ 		goto repeat;
+ 	}
+@@ -276,7 +306,9 @@ int sys_select( unsigned long *buffer )
+ 		timeout *= (1000000/HZ);
+ 		put_fs_long(timeout, (unsigned long *) &tvp->tv_usec);
+ 	}
+-	if (!i && (current->signal & ~current->blocked))
++	if (i)
++		return i;
++	if (current->signal & ~current->blocked)
+ 		return -EINTR;
+-	return i;
++	return 0;
+ }
+diff --git a/include/asm/io.h b/include/asm/io.h
+index 7026c94..832237d 100644
+--- a/include/asm/io.h
++++ b/include/asm/io.h
+@@ -3,7 +3,7 @@ static void inline outb(char value, unsigned short port)
+ 	__asm__ volatile (
+ 		"outb %0,%1"
+ 		:
+-		:"a" (value),"d" (port));
++		:"a" ((char) value),"d" ((unsigned short) port));
+ }
+ 
+ static void inline outb_p(char value, unsigned short port)
+@@ -11,10 +11,12 @@ static void inline outb_p(char value, unsigned short port)
+ 	__asm__ volatile (
+ 		"  outb %0,%1\n\t"
+ 		"  jmp 1f\n\t"
++		"1:jmp 1f\n\t"
++		"1:jmp 1f\n\t"
+ 		"1:jmp 1f\n"
+ 		"1:"
+ 		:
+-		:"a" (value),"d" (port));
++		:"a" ((char) value),"d" ((unsigned short) port));
+ }
+ 
+ static unsigned char inline inb(unsigned short port)
+@@ -24,7 +26,7 @@ static unsigned char inline inb(unsigned short port)
+ 	__asm__ volatile (
+ 		"inb %1,%0"
+ 		:"=a" (_v)
+-		:"d" (port));
++		:"d" ((unsigned short) port));
+ 
+ 	return _v;
+ }
+@@ -36,6 +38,8 @@ static unsigned char inb_p(unsigned short port)
+ 	__asm__ volatile (
+ 		"  inb %1,%0\n\t"
+ 		"  jmp 1f\n\t"
++		"1:jmp 1f\n\t"
++		"1:jmp 1f\n\t"
+ 		"1:jmp 1f\n"
+ 		"1:"
+ 		:"=a" (_v)
+diff --git a/include/asm/segment.h b/include/asm/segment.h
+index c4408e1..8ae87f2 100644
+--- a/include/asm/segment.h
++++ b/include/asm/segment.h
+@@ -64,6 +64,44 @@ extern inline void put_fs_long(unsigned long val,unsigned long * addr)
+ 		:"r" (val),"m" (*addr));
+ }
+ 
++extern inline void memcpy_tofs(void * to, void * from, unsigned long n)
++{
++	__asm__(
++		"cld	\n\t"
++		"push	%%es\n\t"
++		"push	%%fs\n\t"
++		"pop	%%es\n\t"
++		"testb	$1,%%cl\n\t"
++		"je	1f\n\t"
++		"movsb	\n"
++	"1:\t	testb	$2,%%cl\n\t"
++		"je	2f\n\t"
++		"movsw	\n"
++	"2:\t	shrl	$2,%%ecx\n\t"
++		"rep;	movsl\n\t"
++		"pop	%%es"
++		:
++		:"c" (n),"D" ((long) to),"S" ((long) from)
++		:"cx","di","si");
++}
++
++extern inline void memcpy_fromfs(void * to, void * from, unsigned long n)
++{
++	__asm__(
++		"cld	\n\t"
++		"testb	$1,%%cl\n\t"
++		"je	1f\n\t"
++		"fs;	movsb\n"
++	"1:\t	testb	$2,%%cl\n\t"
++		"je	2f\n\t"
++		"fs;	movsw\n"
++	"2:\t	shrl	$2,%%ecx\n\t"
++		"rep; fs; movsl"
++		:
++		:"c" (n),"D" ((long) to),"S" ((long) from)
++		:"cx","di","si");
++}
++
+ /*
+  * Someone who knows GNU asm better than I should double check the followig.
+  * It seems to work, but I don't know if I'm doing something subtly wrong.
+diff --git a/include/fcntl.h b/include/fcntl.h
+index 1f8d7e0..981797b 100644
+--- a/include/fcntl.h
++++ b/include/fcntl.h
+@@ -13,7 +13,7 @@
+ #define O_NOCTTY	00400	/* not fcntl */
+ #define O_TRUNC		01000	/* not fcntl */
+ #define O_APPEND	02000
+-#define O_NONBLOCK	04000	/* not fcntl */
++#define O_NONBLOCK	04000
+ #define O_NDELAY	O_NONBLOCK
+ 
+ /* Defines for fcntl-commands. Note that currently
+diff --git a/include/linux/config.h b/include/linux/config.h
+index 183e2eb..bec3e5b 100644
+--- a/include/linux/config.h
++++ b/include/linux/config.h
+@@ -16,7 +16,7 @@
+ #define UTS_SYSNAME "Linux"
+ #define UTS_NODENAME "(none)"	/* set by sethostname() */
+ #define UTS_RELEASE "0"		/* patchlevel */
+-#define UTS_VERSION "0.12"
++#define UTS_VERSION "0.95a"
+ #define UTS_MACHINE "i386"	/* hardware type */
+ 
+ /* Don't touch these, unless you really know what your doing. */
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index c7cc8ee..3e29b70 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -165,7 +165,7 @@ extern struct buffer_head * start_buffer;
+ extern int nr_buffers;
+ 
+ extern void check_disk_change(int dev);
+-extern int floppy_change(unsigned int nr);
++extern int floppy_change(struct buffer_head * first_block);
+ extern int ticks_to_floppy_on(unsigned int dev);
+ extern void floppy_on(unsigned int dev);
+ extern void floppy_off(unsigned int dev);
+diff --git a/include/linux/hdreg.h b/include/linux/hdreg.h
+index af16872..0669898 100644
+--- a/include/linux/hdreg.h
++++ b/include/linux/hdreg.h
+@@ -52,14 +52,14 @@
+ #define EXTENDED_PARTITION	5
+ 
+ struct partition {
+-	unsigned char boot_ind;		/* 0x80 - active (unused) */
+-	unsigned char head;		/* ? */
+-	unsigned char sector;		/* ? */
+-	unsigned char cyl;		/* ? */
+-	unsigned char sys_ind;		/* ? */
+-	unsigned char end_head;		/* ? */
+-	unsigned char end_sector;	/* ? */
+-	unsigned char end_cyl;		/* ? */
++	unsigned char boot_ind;		/* 0x80 - active */
++	unsigned char head;		/* starting head */
++	unsigned char sector;		/* starting sector */
++	unsigned char cyl;		/* starting cylinder */
++	unsigned char sys_ind;		/* What partition type */
++	unsigned char end_head;		/* end head */
++	unsigned char end_sector;	/* end sector */
++	unsigned char end_cyl;		/* end cylinder */
+ 	unsigned int start_sect;	/* starting sector counting from 0 */
+ 	unsigned int nr_sects;		/* nr of sectors in partition */
+ };
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index f95c1e2..ca72a52 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -121,6 +121,10 @@ struct task_struct {
+ 	 * p->p_pptr->pid)
+ 	 */
+ 	struct task_struct	*p_pptr, *p_cptr, *p_ysptr, *p_osptr;
++	/*
++	 * sleep makes a singly linked list with this.
++	 */
++	struct task_struct *next_wait;
+ 	unsigned short uid,euid,suid;
+ 	unsigned short gid,egid,sgid;
+ 	unsigned long timeout,alarm;
+@@ -164,7 +168,7 @@ struct task_struct {
+ /* ec,brk... */	0,0,0,0,0,0, \
+ /* pid etc.. */	0,0,0,0, \
+ /* suppl grps*/ {NOGROUP,}, \
+-/* proc links*/ &init_task.task,0,0,0, \
++/* proc links*/ &init_task.task,NULL,NULL,NULL,NULL, \
+ /* uid etc */	0,0,0,0,0,0, \
+ /* timeout */	0,0,0,0,0,0,0, \
+ /* rlimits */   { {0x7fffffff, 0x7fffffff}, {0x7fffffff, 0x7fffffff},  \
+diff --git a/include/linux/timer.h b/include/linux/timer.h
+index 295738e..ab3c74e 100644
+--- a/include/linux/timer.h
++++ b/include/linux/timer.h
+@@ -24,11 +24,16 @@
+ 
+ #define BLANK_TIMER	0
+ #define BEEP_TIMER	1
++
+ #define SER1_TIMER	2
+ #define SER2_TIMER	3
++#define SER3_TIMER	4
++#define SER4_TIMER	5
+ 
+ #define SER1_TIMEOUT	8
+ #define SER2_TIMEOUT	9
++#define SER3_TIMEOUT	10
++#define SER4_TIMEOUT	11
+ 
+ #define HD_TIMER	16
+ #define FLOPPY_TIMER	17
+diff --git a/include/linux/tty.h b/include/linux/tty.h
+index 4812f85..805894d 100644
+--- a/include/linux/tty.h
++++ b/include/linux/tty.h
+@@ -10,14 +10,14 @@
+ #define _TTY_H
+ 
+ #define MAX_CONSOLES	8
+-#define NR_SERIALS	2
++#define NR_SERIALS	4
+ #define NR_PTYS		4
+ 
+ extern int NR_CONSOLES;
+ 
+ #include <termios.h>
+ 
+-#define TTY_BUF_SIZE 1024
++#define TTY_BUF_SIZE 2048
+ 
+ struct tty_queue {
+ 	unsigned long data;
+@@ -60,6 +60,7 @@ struct tty_struct {
+ 	int pgrp;
+ 	int session;
+ 	int stopped;
++	int busy;
+ 	struct winsize winsize;
+ 	void (*write)(struct tty_struct * tty);
+ 	struct tty_queue *read_q;
+@@ -67,6 +68,18 @@ struct tty_struct {
+ 	struct tty_queue *secondary;
+ 	};
+ 
++#define TTY_WRITE(tty) \
++do { \
++	cli(); \
++	if (!(tty)->busy) { \
++		(tty)->busy = 1; \
++		sti(); \
++		(tty)->write((tty)); \
++		(tty)->busy = 0; \
++	} else \
++		sti(); \
++} while (0)
++
+ extern struct tty_struct tty_table[];
+ extern int fg_console;
+ extern unsigned long video_num_columns;
+@@ -96,6 +109,8 @@ void rs_write(struct tty_struct * tty);
+ void mpty_write(struct tty_struct * tty);
+ void spty_write(struct tty_struct * tty);
+ 
++extern void serial_open(unsigned int line);
++
+ void copy_to_cooked(struct tty_struct * tty);
+ 
+ void update_screen(int new_console);
+diff --git a/include/termios.h b/include/termios.h
+index dd87c42..ffd4214 100644
+--- a/include/termios.h
++++ b/include/termios.h
+@@ -3,8 +3,6 @@
+ 
+ #include <sys/types.h>
+ 
+-#define TTY_BUF_SIZE 1024
+-
+ /* 0x54 is just a magic number to make these relatively uniqe ('T') */
+ 
+ #define TCGETS		0x5401
+diff --git a/init/main.c b/init/main.c
+index abcc1fc..2ff6a5f 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -203,6 +203,7 @@ void init(void)
+ 		NR_BUFFERS*BLOCK_SIZE);
+ 	printf("Free mem: %d bytes\n\r",memory_end-main_memory_start);
+ 
++	execve("/etc/init",argv_init,envp_init);
+ 	execve("/bin/init",argv_init,envp_init);
+ 	/* if this fails, fall through to original stuff */
+ 
+diff --git a/kernel/blk_drv/blk.h b/kernel/blk_drv/blk.h
+index aebbdec..db6236d 100644
+--- a/kernel/blk_drv/blk.h
++++ b/kernel/blk_drv/blk.h
+@@ -100,9 +100,13 @@ extern int * blk_size[NR_BLK_DEV];
+ void (*DEVICE_INTR)(void) = NULL;
+ #endif
+ #ifdef DEVICE_TIMEOUT
+-#define SET_INTR(x) (DEVICE_INTR = (x), \
+-	timer_table[DEVICE_TIMEOUT].expires = jiffies + 200, \
+-	timer_active |= 1<<DEVICE_TIMEOUT)
++
++#define SET_INTR(x)							\
++	if (DEVICE_INTR = (x)) {					\
++		timer_table[DEVICE_TIMEOUT].expires = jiffies + 200;	\
++		timer_active |= 1<<DEVICE_TIMEOUT;			\
++	} else								\
++		timer_active &= ~(1<<DEVICE_TIMEOUT)
+ #else
+ #define SET_INTR(x) (DEVICE_INTR = (x))
+ #endif
+@@ -134,23 +138,16 @@ extern inline void end_request(int uptodate)
+ 	CURRENT = CURRENT->next;
+ }
+ 
+-#ifdef DEVICE_TIMEOUT
+-#define CLEAR_DEVICE_TIMEOUT timer_active &= ~(1<<DEVICE_TIMEOUT);
+-#else
+-#define CLEAR_DEVICE_TIMEOUT
+-#endif
+-
+ #ifdef DEVICE_INTR
+-#define CLEAR_DEVICE_INTR DEVICE_INTR = 0;
++#define CLEAR_INTR SET_INTR(NULL)
+ #else
+-#define CLEAR_DEVICE_INTR
++#define CLEAR_INTR
+ #endif
+ 
+ #define INIT_REQUEST \
+ repeat: \
+ 	if (!CURRENT) {\
+-		CLEAR_DEVICE_INTR \
+-		CLEAR_DEVICE_TIMEOUT \
++		CLEAR_INTR; \
+ 		return; \
+ 	} \
+ 	if (MAJOR(CURRENT->dev) != MAJOR_NR) \
+diff --git a/kernel/blk_drv/floppy.c b/kernel/blk_drv/floppy.c
+index 20237bc..26649e6 100644
+--- a/kernel/blk_drv/floppy.c
++++ b/kernel/blk_drv/floppy.c
+@@ -43,6 +43,8 @@
+ #define MAJOR_NR 2
+ #include "blk.h"
+ 
++unsigned int changed_floppies = 0;
++
+ static int recalibrate = 0;
+ static int reset = 0;
+ static int seek = 0;
+@@ -56,8 +58,8 @@ __asm__("outb %0,%1\n\tjmp 1f\n1:\tjmp 1f\n1:"::"a" ((char) (val)),"i" (port))
+ #define DRIVE(x) ((x)&0x03)
+ /*
+  * Note that MAX_ERRORS=X doesn't imply that we retry every bad read
+- * max X times - some types of errors increase the errorcount by 2,
+- * so we might actually retry only X/2 times before giving up.
++ * max X times - some types of errors increase the errorcount by 2 or
++ * even 3, so we might actually retry only X/2 times before giving up.
+  */
+ #define MAX_ERRORS 12
+ 
+@@ -115,18 +117,20 @@ extern char floppy_track_buffer[512*2*18];
+  * information to interrupts. They are the data used for the current
+  * request.
+  */
++#define NO_TRACK 255
++
+ static int read_track = 0;	/* flag to indicate if we want to read all track */
+ static int buffer_track = -1;
+ static int buffer_drive = -1;
+ static int cur_spec1 = -1;
+ static int cur_rate = -1;
+ static struct floppy_struct * floppy = floppy_type;
+-static unsigned char current_drive = 0;
++static unsigned char current_drive = 255;
+ static unsigned char sector = 0;
+ static unsigned char head = 0;
+ static unsigned char track = 0;
+ static unsigned char seek_track = 0;
+-static unsigned char current_track = 255;
++static unsigned char current_track = NO_TRACK;
+ static unsigned char command = 0;
+ unsigned char selected = 0;
+ struct task_struct * wait_on_floppy_select = NULL;
+@@ -145,20 +149,37 @@ void floppy_deselect(unsigned int nr)
+  * to the desired drive, but it will probably not survive the sleep if
+  * several floppies are used at the same time: thus the loop.
+  */
+-int floppy_change(unsigned int nr)
++int floppy_change(struct buffer_head * bh)
+ {
+-repeat:
+-	floppy_on(nr);
+-	while ((current_DOR & 3) != nr && selected)
+-		sleep_on(&wait_on_floppy_select);
+-	if ((current_DOR & 3) != nr)
+-		goto repeat;
+-	if (inb(FD_DIR) & 0x80) {
+-		floppy_off(nr);
++	unsigned int mask = 1 << (bh->b_dev & 0x03);
++
++	if (MAJOR(bh->b_dev) != 2) {
++		printk("floppy_changed: not a floppy\n");
++		return 0;
++	}
++	if (changed_floppies & mask) {
++		changed_floppies &= ~mask;
++		recalibrate = 1;
++		return 1;
++	}
++	if (!bh)
++		return 0;
++	if (bh->b_dirt)
++		ll_rw_block(WRITE,bh);
++	else {
+ 		buffer_track = -1;
++		bh->b_uptodate = 0;
++		ll_rw_block(READ,bh);
++	}
++	cli();
++	while (bh->b_lock)
++		sleep_on(&bh->b_wait);
++	sti();
++	if (changed_floppies & mask) {
++		changed_floppies &= ~mask;
++		recalibrate = 1;
+ 		return 1;
+ 	}
+-	floppy_off(nr);
+ 	return 0;
+ }
+ 
+@@ -223,6 +244,7 @@ static void output_byte(char byte)
+ 			return;
+ 		}
+ 	}
++	current_track = NO_TRACK;
+ 	reset = 1;
+ 	printk("Unable to send byte to FDC\n\r");
+ }
+@@ -244,13 +266,14 @@ static int result(void)
+ 		}
+ 	}
+ 	reset = 1;
++	current_track = NO_TRACK;
+ 	printk("Getstatus times out\n\r");
+ 	return -1;
+ }
+ 
+ static void bad_flp_intr(void)
+ {
+-	current_track = -1;
++	current_track = NO_TRACK;
+ 	CURRENT->errors++;
+ 	if (CURRENT->errors > MAX_ERRORS) {
+ 		floppy_deselect(current_drive);
+@@ -258,6 +281,8 @@ static void bad_flp_intr(void)
+ 	}
+ 	if (CURRENT->errors > MAX_ERRORS/2)
+ 		reset = 1;
++	else
++		recalibrate = 1;
+ }
+ 
+ /*
+@@ -383,15 +408,15 @@ static void transfer(void)
+ static void recal_interrupt(void)
+ {
+ 	output_byte(FD_SENSEI);
++	current_track = NO_TRACK;
+ 	if (result()!=2 || (ST0 & 0xE0) == 0x60)
+ 		reset = 1;
+-	else
+-		recalibrate = 0;
+ 	do_fd_request();
+ }
+ 
+ void unexpected_floppy_interrupt(void)
+ {
++	current_track = NO_TRACK;
+ 	output_byte(FD_SENSEI);
+ 	if (result()!=2 || (ST0 & 0xE0) == 0x60)
+ 		reset = 1;
+@@ -427,15 +452,16 @@ static void reset_floppy(void)
+ {
+ 	int i;
+ 
++	do_floppy = reset_interrupt;
+ 	reset = 0;
++	current_track = NO_TRACK;
+ 	cur_spec1 = -1;
+ 	cur_rate = -1;
+ 	recalibrate = 1;
+ 	printk("Reset-floppy called\n\r");
+ 	cli();
+-	do_floppy = reset_interrupt;
+ 	outb_p(current_DOR & ~0x04,FD_DOR);
+-	for (i=0 ; i<100 ; i++)
++	for (i=0 ; i<1000 ; i++)
+ 		__asm__("nop");
+ 	outb(current_DOR,FD_DOR);
+ 	sti();
+@@ -443,6 +469,18 @@ static void reset_floppy(void)
+ 
+ static void floppy_on_interrupt(void)
+ {
++	if (inb(FD_DIR) & 0x80) {
++		changed_floppies |= 1<<current_drive;
++		buffer_track = -1;
++	}
++	if (reset) {
++		reset_floppy();
++		return;
++	}
++	if (recalibrate) {
++		recalibrate_floppy();
++		return;
++	}
+ /* We cannot do a floppy-select, as that might sleep. We just force it */
+ 	selected = 1;
+ 	if (current_drive != (current_DOR & 3)) {
+@@ -459,19 +497,11 @@ void do_fd_request(void)
+ 	unsigned int block;
+ 	char * buffer_area;
+ 
+-	seek = 0;
+-	if (reset) {
+-		reset_floppy();
+-		return;
+-	}
+-	if (recalibrate) {
+-		recalibrate_floppy();
+-		return;
+-	}
+ 	INIT_REQUEST;
++	seek = 0;
+ 	floppy = (MINOR(CURRENT->dev)>>2) + floppy_type;
+ 	if (current_drive != CURRENT_DEV)
+-		seek = 1;
++		current_track = NO_TRACK;
+ 	current_drive = CURRENT_DEV;
+ 	block = CURRENT->sector;
+ 	if (block+2 > floppy->size) {
+diff --git a/kernel/blk_drv/hd.c b/kernel/blk_drv/hd.c
+index 9365312..f3e5939 100644
+--- a/kernel/blk_drv/hd.c
++++ b/kernel/blk_drv/hd.c
+@@ -11,6 +11,9 @@
+  * sleep. Special care is recommended.
+  *
+  *  modified by Drew Eckhardt to check nr of hd's from the CMOS.
++ *
++ *  Thanks to Branko Lankester, lankeste@fwi.uva.nl, who found a bug
++ *  in the early extended-partition checks and added DM partitions
+  */
+ 
+ #include <linux/config.h>
+@@ -26,10 +29,11 @@
+ #define MAJOR_NR 3
+ #include "blk.h"
+ 
+-#define CMOS_READ(addr) ({ \
+-outb_p(0x80|addr,0x70); \
+-inb_p(0x71); \
+-})
++static inline unsigned char CMOS_READ(unsigned char addr)
++{
++	outb_p(0x80|addr,0x70);
++	return inb_p(0x71);
++}
+ 
+ /* Max read/write errors/sector */
+ #define MAX_ERRORS	7
+@@ -39,7 +43,7 @@ static void recal_intr(void);
+ static void bad_rw_intr(void);
+ 
+ static int recalibrate = 0;
+-static int reset = 0;
++static int reset = 1;
+ 
+ /*
+  *  This struct defines the HD's and their types.
+@@ -87,12 +91,30 @@ static void check_partition(unsigned int dev)
+ 	if (*(unsigned short *) (bh->b_data+510) == 0xAA55) {
+ 		p = 0x1BE + (void *)bh->b_data;
+ 		for (i=0 ; i<4 ; i++,p++) {
++			if (!(hd[i+minor].nr_sects = p->nr_sects))
++				continue;
+ 			hd[i+minor].start_sect = p->start_sect;
+-			hd[i+minor].nr_sects = p->nr_sects;
++			if ((current_minor & 0x3f) >= 60)
++				continue;
++			if (p->sys_ind == EXTENDED_PARTITION) {
++				current_minor += 4;
++				check_partition(0x0300 | (i+minor));
++			}
+ 		}
+-		if (p->nr_sects && p->sys_ind == EXTENDED_PARTITION) {
+-			current_minor += 4;
+-			check_partition(i+minor);
++		/*
++		 * check for Disk Manager partition table
++		 */
++		if (*(unsigned short *) (bh->b_data+0xfc) == 0x55AA) {
++			p = 0x1BE + (void *)bh->b_data;
++			for (i=4; i<16; i++) {
++				p--;
++				if ((current_minor & 0x3f) >= 60)
++					break;
++				if (!(hd[current_minor+4].start_sect = p->start_sect))
++					continue;
++				hd[current_minor+4].nr_sects = p->nr_sects;
++				current_minor++;
++			}
+ 		}
+ 	} else
+ 		printk("Bad partition table on dev %04x\n",dev);
+@@ -290,11 +312,15 @@ static void bad_rw_intr(void)
+ 		end_request(0);
+ 	if (CURRENT->errors > MAX_ERRORS/2)
+ 		reset = 1;
++	else
++		recalibrate = 1;
+ }
+ 
+ static void read_intr(void)
+ {
++	SET_INTR(&read_intr);
+ 	if (win_result()) {
++		SET_INTR(NULL);
+ 		bad_rw_intr();
+ 		do_hd_request();
+ 		return;
+@@ -303,10 +329,9 @@ static void read_intr(void)
+ 	CURRENT->errors = 0;
+ 	CURRENT->buffer += 512;
+ 	CURRENT->sector++;
+-	if (--CURRENT->nr_sectors) {
+-		SET_INTR(&read_intr);
++	if (--CURRENT->nr_sectors)
+ 		return;
+-	}
++	SET_INTR(NULL);
+ 	end_request(1);
+ 	do_hd_request();
+ }
+@@ -338,13 +363,13 @@ static void recal_intr(void)
+ 
+ static void hd_times_out(void)
+ {
++	do_hd = NULL;
++	reset = 1;
+ 	if (!CURRENT)
+ 		return;
+ 	printk("HD timeout");
+ 	if (++CURRENT->errors >= MAX_ERRORS)
+ 		end_request(0);
+-	SET_INTR(NULL);
+-	reset = 1;
+ 	do_hd_request();
+ }
+ 
+@@ -358,7 +383,8 @@ void do_hd_request(void)
+ 	INIT_REQUEST;
+ 	dev = MINOR(CURRENT->dev);
+ 	block = CURRENT->sector;
+-	if (dev >= (NR_HD<<6) || block+2 > hd[dev].nr_sects) {
++	nsect = CURRENT->nr_sectors;
++	if (dev >= (NR_HD<<6) || block+nsect > hd[dev].nr_sects) {
+ 		end_request(0);
+ 		goto repeat;
+ 	}
+@@ -369,7 +395,6 @@ void do_hd_request(void)
+ 	head = block % hd_info[dev].head;
+ 	cyl = block / hd_info[dev].head;
+ 	sec++;
+-	nsect = CURRENT->nr_sectors;
+ 	if (reset) {
+ 		recalibrate = 1;
+ 		reset_hd();
+@@ -377,7 +402,7 @@ void do_hd_request(void)
+ 	}
+ 	if (recalibrate) {
+ 		recalibrate = 0;
+-		hd_out(dev,hd_info[CURRENT_DEV].sect,0,0,0,
++		hd_out(dev,hd_info[dev].sect,0,0,0,
+ 			WIN_RESTORE,&recal_intr);
+ 		if (reset)
+ 			goto repeat;
+@@ -405,7 +430,7 @@ void do_hd_request(void)
+ void hd_init(void)
+ {
+ 	blk_dev[MAJOR_NR].request_fn = DEVICE_REQUEST;
+-	set_trap_gate(0x2E,&hd_interrupt);
++	set_intr_gate(0x2E,&hd_interrupt);
+ 	outb_p(inb_p(0x21)&0xfb,0x21);
+ 	outb(inb_p(0xA1)&0xbf,0xA1);
+ 	timer_table[HD_TIMER].fn = hd_times_out;
+diff --git a/kernel/chr_drv/console.c b/kernel/chr_drv/console.c
+index 3e69db9..82568c6 100644
+--- a/kernel/chr_drv/console.c
++++ b/kernel/chr_drv/console.c
+@@ -187,7 +187,7 @@ static char * translations[] = {
+ #define GRAF_TRANS (translations[1])
+ 
+ /* NOTE! gotoxy thinks x==video_num_columns is ok */
+-static inline void gotoxy(int currcons, int new_x,unsigned int new_y)
++static inline void gotoxy(int currcons, unsigned int new_x,unsigned int new_y)
+ {
+ 	if (new_x > video_num_columns || new_y >= video_num_lines)
+ 		return;
+@@ -210,75 +210,46 @@ static inline void set_origin(int currcons)
+ 	sti();
+ }
+ 
+-static void scrup(int currcons)
++static void scrup(int currcons, unsigned int t, unsigned int b)
+ {
+-	unsigned int oldbottom, oldtop;
+-
+-	oldbottom = bottom;
+-	oldtop = top;
+-	if (y < top) {
+-		top = 0;
+-		bottom = y + 1;
+-	} else if (y > bottom) {
+-		bottom = video_num_lines;
+-		top = y;
+-	}
+-	if (top > video_num_lines)
+-		top = 0;
+-	if (bottom > video_num_lines)
+-		bottom = video_num_lines;
+-	if (bottom <= top) {
+-		bottom = oldbottom;
+-		top = oldtop;
++	int hardscroll = 1;
++
++	if (b > video_num_lines || t >= b)
+ 		return;
+-	}
+-	if (video_type == VIDEO_TYPE_EGAC || video_type == VIDEO_TYPE_EGAM)
+-	{
+-		if (!top && bottom == video_num_lines) {
+-			origin += video_size_row;
+-			pos += video_size_row;
+-			scr_end += video_size_row;
+-			if (scr_end > video_mem_end) {
+-				__asm__("cld\n\t"
+-					"rep\n\t"
+-					"movsl\n\t"
+-					"movl _video_num_columns,%1\n\t"
+-					"rep\n\t"
+-					"stosw"
+-					::"a" (video_erase_char),
+-					"c" ((video_num_lines-1)*video_num_columns>>1),
+-					"D" (video_mem_start),
+-					"S" (origin)
+-					:"cx","di","si");
+-				scr_end -= origin-video_mem_start;
+-				pos -= origin-video_mem_start;
+-				origin = video_mem_start;
+-			} else {
+-				__asm__("cld\n\t"
+-					"rep\n\t"
+-					"stosw"
+-					::"a" (video_erase_char),
+-					"c" (video_num_columns),
+-					"D" (scr_end-video_size_row)
+-					:"cx","di");
+-			}
+-			set_origin(currcons);
+-		} else {
++	if (video_type != VIDEO_TYPE_EGAC && video_type != VIDEO_TYPE_EGAM)
++		hardscroll = 0;
++	else if (t || b != video_num_lines)
++		hardscroll = 0;
++	if (hardscroll) {
++		origin += video_size_row;
++		pos += video_size_row;
++		scr_end += video_size_row;
++		if (scr_end > video_mem_end) {
+ 			__asm__("cld\n\t"
+ 				"rep\n\t"
+ 				"movsl\n\t"
+-				"movl _video_num_columns,%%ecx\n\t"
++				"movl _video_num_columns,%1\n\t"
+ 				"rep\n\t"
+ 				"stosw"
+ 				::"a" (video_erase_char),
+-				"c" ((bottom-top-1)*video_num_columns>>1),
+-				"D" (origin+video_size_row*top),
+-				"S" (origin+video_size_row*(top+1))
++				"c" ((video_num_lines-1)*video_num_columns>>1),
++				"D" (video_mem_start),
++				"S" (origin)
+ 				:"cx","di","si");
++			scr_end -= origin-video_mem_start;
++			pos -= origin-video_mem_start;
++			origin = video_mem_start;
++		} else {
++			__asm__("cld\n\t"
++				"rep\n\t"
++				"stosw"
++				::"a" (video_erase_char),
++				"c" (video_num_columns),
++				"D" (scr_end-video_size_row)
++				:"cx","di");
+ 		}
+-	}
+-	else		/* Not EGA/VGA */
+-	{
++		set_origin(currcons);
++	} else {
+ 		__asm__("cld\n\t"
+ 			"rep\n\t"
+ 			"movsl\n\t"
+@@ -286,37 +257,17 @@ static void scrup(int currcons)
+ 			"rep\n\t"
+ 			"stosw"
+ 			::"a" (video_erase_char),
+-			"c" ((bottom-top-1)*video_num_columns>>1),
+-			"D" (origin+video_size_row*top),
+-			"S" (origin+video_size_row*(top+1))
++			"c" ((b-t-1)*video_num_columns>>1),
++			"D" (origin+video_size_row*t),
++			"S" (origin+video_size_row*(t+1))
+ 			:"cx","di","si");
+ 	}
+-	bottom = oldbottom;
+-	top = oldtop;
+ }
+ 
+-static void scrdown(int currcons)
++static void scrdown(int currcons, unsigned int t, unsigned int b)
+ {
+-	unsigned int oldbottom, oldtop;
+-
+-	oldbottom = bottom;
+-	oldtop = top;
+-	if (y < top) {
+-		top = 0;
+-		bottom = y + 1;
+-	} else if (y > bottom) {
+-		bottom = video_num_lines;
+-		top = y;
+-	}
+-	if (top > video_num_lines)
+-		top = 0;
+-	if (bottom > video_num_lines)
+-		bottom = video_num_lines;
+-	if (bottom<=top) {
+-		bottom = oldbottom;
+-		top = oldtop;
++	if (b > video_num_lines || t >= b)
+ 		return;
+-	}
+ 	__asm__("std\n\t"
+ 		"rep\n\t"
+ 		"movsl\n\t"
+@@ -326,12 +277,10 @@ static void scrdown(int currcons)
+ 		"stosw\n\t"
+ 		"cld"
+ 		::"a" (video_erase_char),
+-		"c" ((bottom-top-1)*video_num_columns>>1),
+-		"D" (origin+video_size_row*bottom-4),
+-		"S" (origin+video_size_row*(bottom-1)-4)
++		"c" ((b-t-1)*video_num_columns>>1),
++		"D" (origin+video_size_row*b-4),
++		"S" (origin+video_size_row*(b-1)-4)
+ 		:"ax","cx","di","si");
+-	bottom = oldbottom;
+-	top = oldtop;
+ }
+ 
+ static void lf(int currcons)
+@@ -341,7 +290,7 @@ static void lf(int currcons)
+ 		pos += video_size_row;
+ 		return;
+ 	} else
+-		scrup(currcons);
++		scrup(currcons,top,bottom);
+ }
+ 
+ static void ri(int currcons)
+@@ -351,7 +300,7 @@ static void ri(int currcons)
+ 		pos -= video_size_row;
+ 		return;
+ 	} else
+-		scrdown(currcons);
++		scrdown(currcons,top,bottom);
+ }
+ 
+ static void cr(int currcons)
+@@ -371,8 +320,8 @@ static void del(int currcons)
+ 
+ static void csi_J(int currcons, int vpar)
+ {
+-	long count;
+-	long start;
++	unsigned long count;
++	unsigned long start;
+ 
+ 	switch (vpar) {
+ 		case 0:	/* erase from cursor to end of display */
+@@ -429,7 +378,7 @@ static void csi_K(int currcons, int vpar)
+ 		:"cx","di");
+ }
+ 
+-void csi_m(int currcons)
++static void csi_m(int currcons)
+ {
+ 	int i;
+ 	static int conv_table[8] = { 0, 4, 2, 6, 1, 5, 3, 7 };
+@@ -442,33 +391,35 @@ void csi_m(int currcons)
+ 			case 4: /* bold */
+ 				if (!iscolor)
+ 					attr |= 0x01;
+-				/* check if forground == background */
+-				else if (vc_cons[currcons].vc_bold_attr != -1)
+-					attr = (vc_cons[currcons].vc_bold_attr&0x0f)|(0xf0&(attr));
+-				else {
+-					short newattr = (attr&0xf0)|(0xf&(~attr));
+-					attr = ((newattr&0xf)==((attr>>4)&0xf)?
+-						(attr&0xf0)|(((attr&0xf)+1)%0xf):
+-							newattr);
++				else { /* check if forground == background */
++					if (vc_cons[currcons].vc_bold_attr != -1)
++						attr = (vc_cons[currcons].vc_bold_attr&0x0f)|(0xf0&(attr));
++					else {
++						short newattr = (attr&0xf0)|(0xf&(~attr));
++						attr = ((newattr&0xf)==((attr>>4)&0xf)?
++								(attr&0xf0)|(((attr&0xf)+1)%0xf):
++								newattr);
++					}
+ 				}
+ 				break;
+ 			case 5: attr=attr|0x80;break;  /* blinking */
+-			case 7: attr=(attr<<4)|(attr>>4);break;  /* negative */
++			case 7: attr=(attr&0x88)|((attr<<4)&0x70)|
++					((attr>>4)&0x07);
++				break;  /* negative */
+ 			case 22: attr=attr&0xf7;break; /* not bold */
+ 			case 24: attr=attr&0xfe;break;  /* not underline */
+ 			case 25: attr=attr&0x7f;break;  /* not blinking */
+ 			case 27: attr=def_attr;break; /* positive image */
+-			case 39: attr=(attr & 0xf0)|(def_attr & 0x0f); break;
+-			case 49: attr=(attr & 0x0f)|(def_attr & 0xf0); break;
++			case 39: attr=(attr & 0xf8)|(def_attr & 0x07); break;
++			case 49: attr=(attr & 0x8f)|(def_attr & 0x70); break;
+ 			default:
+ 				if (!can_do_colour)
+ 					break;
+ 				iscolor = 1;
+-				if ((par[i]>=30) && (par[i]<=38))
+-					attr = (attr & 0xf0) | (par[i]-30);
+-				/* Background color */
+-				else if ((par[i]>=40) && (par[i]<=48))
+-					attr = (attr & 0x0f) | ((par[i]-40)<<4);
++				if ((par[i]>=30) && (par[i]<=37))
++					attr = (attr & 0xf8) | conv_table[par[i]-30];
++				else if ((par[i]>=40) && (par[i]<=47)) /* Background color */
++					attr = (attr & 0x8f) | (conv_table[par[i]-40]<<4);
+ 				else
+ 					break;
+ 		}
+@@ -509,7 +460,7 @@ static void respond(int currcons, struct tty_struct * tty)
+ 
+ static void insert_char(int currcons)
+ {
+-	int i=x;
++	unsigned int i = x;
+ 	unsigned short tmp, old = video_erase_char;
+ 	unsigned short * p = (unsigned short *) pos;
+ 
+@@ -523,25 +474,16 @@ static void insert_char(int currcons)
+ 
+ static void insert_line(int currcons)
+ {
+-	int oldtop,oldbottom;
+-
+-	oldtop=top;
+-	oldbottom=bottom;
+-	top=y;
+-	bottom = video_num_lines;
+-	scrdown(currcons);
+-	top=oldtop;
+-	bottom=oldbottom;
++	scrdown(currcons, y, bottom);
+ }
+ 
+ static void delete_char(int currcons)
+ {
+-	int i;
++	unsigned int i = x;
+ 	unsigned short * p = (unsigned short *) pos;
+ 
+ 	if (x >= video_num_columns)
+ 		return;
+-	i = x;
+ 	while (++i < video_num_columns) {
+ 		*p = *(p+1);
+ 		p++;
+@@ -551,15 +493,7 @@ static void delete_char(int currcons)
+ 
+ static void delete_line(int currcons)
+ {
+-	int oldtop,oldbottom;
+-
+-	oldtop=top;
+-	oldbottom=bottom;
+-	top=y;
+-	bottom = video_num_lines;
+-	scrup(currcons);
+-	top=oldtop;
+-	bottom=oldbottom;
++	scrup(currcons, y, bottom);
+ }
+ 
+ static void csi_at(int currcons, unsigned int nr)
+@@ -622,23 +556,24 @@ enum {
+ 	ESgotpars,
+ 	ESfunckey,
+ 	ESsetterm,
+-	ESsetgraph
++	ESsetgraph,
++	ESgraph,
++	ESgresc,
++	ESignore
+ };
+ 
+ void con_write(struct tty_struct * tty)
+ {
+-	int nr;
+-	char c;
+-	int currcons;
++	unsigned char c;
++	unsigned int currcons;
+ 
+ 	wake_up(&tty->write_q->proc_list);
+ 	currcons = tty - tty_table;
+-	if ((currcons>=MAX_CONSOLES) || (currcons<0)) {
++	if (currcons >= MAX_CONSOLES) {
+ 		printk("con_write: illegal tty\n\r");
+ 		return;
+ 	}
+-	nr = CHARS(tty->write_q);
+-	while (nr--) {
++	while (!EMPTY(tty->write_q)) {
+ 		if (tty->stopped)
+ 			break;
+ 		GETCH(tty->write_q,c);
+@@ -653,9 +588,8 @@ void con_write(struct tty_struct * tty)
+ 						lf(currcons);
+ 					}
+ 					*(char *) pos = translate[c-32];
+-					pos++;
+-					*(char *) pos = attr;
+-					pos++;
++					*(char *) (pos+1) = attr;
++					pos += 2;
+ 					x++;
+ 				} else if (c == 27)
+ 					state = ESesc;
+@@ -760,7 +694,8 @@ void con_write(struct tty_struct * tty)
+ 					npar++;
+ 					break;
+ 				} else if (c>='0' && c<='9') {
+-					par[npar]=10*par[npar]+c-'0';
++					par[npar] *= 10;
++					par[npar] += c-'0';
+ 					break;
+ 				} else state=ESgotpars;
+ 			case ESgotpars:
+@@ -1080,9 +1015,7 @@ static void get_scrmem(int currcons)
+ 	video_mem_start = (unsigned long)vc_scrbuf[fg_console];
+ 	origin = video_mem_start;
+ 	scr_end = video_mem_end = video_mem_start + screen_size;
+-	top = 0;
+ 	pos = origin + y * video_size_row + (x<<1);
+-	bottom = video_num_lines;
+ }
+ 
+ static void set_scrmem(int currcons)
+@@ -1091,8 +1024,6 @@ static void set_scrmem(int currcons)
+ 	video_mem_end = video_mem_term;
+ 	origin = video_mem_start;
+ 	scr_end = video_mem_start + screen_size;
+-	top = 0;
+-	bottom = video_num_lines;
+ 	pos = origin + y * video_size_row + (x<<1);
+ 	memcpy((void *)video_mem_base, (void *)vc_scrbuf[fg_console], screen_size);
+ }
+@@ -1199,9 +1130,8 @@ void console_print(const char * b)
+ 			lf(currcons);
+ 		}
+ 		*(char *) pos = c;
+-		pos++;
+-		*(char *) pos = attr;
+-		pos++;
++		*(char *) (pos+1) = attr;
++		pos += 2;
+ 		x++;
+ 	}
+ 	set_cursor(currcons);
+diff --git a/kernel/chr_drv/keyboard.S b/kernel/chr_drv/keyboard.S
+index aba947f..fb24fbd 100644
+--- a/kernel/chr_drv/keyboard.S
++++ b/kernel/chr_drv/keyboard.S
+@@ -32,7 +32,7 @@
+ /*
+  * these are for the keyboard read functions
+  */
+-size	= 1024		/* must be a power of two ! And MUST be the same
++size	= 2048		/* must be a power of two ! And MUST be the same
+ 			   as in tty_io.c !!!! */
+ head = 4
+ tail = 8
+@@ -133,7 +133,7 @@ alt:	movb	$0x10,%al
+ 1:	cmpb	$0,e0
+ 	je	2f
+ 	addb	%al,%al
+-2:	orb	%al,mode
++2:	orb	%al,_kmode
+ 	ret
+ unctrl:movb	$0x04,%al
+ 	jmp	1f
+@@ -142,7 +142,7 @@ unalt:	movb	$0x10,%al
+ 	je	2f
+ 	addb	%al,%al
+ 2:	notb	%al
+-	andb	%al,mode
++	andb	%al,_kmode
+ 	ret
+ 
+ lshift:
+@@ -203,7 +203,7 @@ notappl:
+ 	jmp	_set_leds
+ 
+ /*
+- *  curosr-key/numeric keypad cursor keys are handled here.
++ *  cursor-key/numeric keypad cursor keys are handled here.
+  *  checking for numeric keypad etc.
+  */
+ cursor:
+@@ -286,14 +286,14 @@ func:
+ 	subb	$0x3B,%al
+ 	jb	end_func
+ 	cmpb	$9,%al
+-	jb	ok_func
++	jbe	ok_func
+ 	subb	$18,%al
+ 	cmpb	$10,%al
+ 	jb	end_func
+ 	cmpb	$11,%al
+ 	ja	end_func
+ ok_func:
+-	testb	$0x10,mode
++	testb	$0x10,_kmode
+ 	jne	alt_func
+ 	cmpl	$4,%ecx		/* check that there is enough room */
+ 	jl	end_func
+@@ -434,18 +434,18 @@ key_map:
+ 
+ shift_map:
+ 	.byte	0,27
+-	.ascii	"!@#$%^&*()_+"
++	.ascii	"!\"#$%^&*()_+"
+ 	.byte	127,9
+ 	.ascii	"QWERTYUIOP{}"
+ 	.byte	13,0
+-	.ascii	"ASDFGHJKL:\""
++	.ascii	"ASDFGHJKL:@"
+ 	.byte	'~,0
+-	.ascii	"|ZXCVBNM<>?"
++	.ascii	"~ZXCVBNM<>?"
+ 	.byte	0,'*,0,32	/* 36-39 */
+ 	.fill	16,1,0		/* 3A-49 */
+ 	.byte	'-,0,0,0,'+	/* 4A-4E */
+ 	.byte	0,0,0,0,0,0,0	/* 4F-55 */
+-	.byte	'>
++	.byte	'|
+ 	.fill	10,1,0
+ 
+ alt_map:
+@@ -584,13 +584,13 @@ key_map:
+ 
+ shift_map:
+ 	.byte	0,27
+-	.ascii	"1234567890]+"
++	.ascii	"!\"#$%&/()=?`"
+ 	.byte	127,9
+-	.ascii	"AZERTYUIOP<>"
+-	.byte	13,0
+-	.ascii	"QSDFGHJKLM%"
+-	.byte	'~,0,'#
+-	.ascii	"WXCVBN?./\\"
++	.ascii	"QWERTYUIOP"
++	.byte	143,94,13,0
++	.ascii	"ASDFGHJKL"
++	.byte	146,157,0,0
++	.ascii	"*ZXCVBNM;:_"
+ 	.byte	0,'*,0,32	/* 36-39 */
+ 	.fill	16,1,0		/* 3A-49 */
+ 	.byte	'-,0,0,0,'+	/* 4A-4E */
+@@ -600,9 +600,9 @@ shift_map:
+ 
+ alt_map:
+ 	.byte	0,0
+-	.ascii	"\0~#{[|`\\^@]}"
+-	.byte	0,0
+-	.byte	'@,0,0,0,0,0,0,0,0,0,0
++	.ascii	"\0@\0$\0\0{[]}\0"
++	.byte	'|,0,0
++	.byte	0,0,0,0,0,0,0,0,0,0,0
+ 	.byte	'~,13,0
+ 	.byte	0,0,0,0,0,0,0,0,0,0,0
+ 	.byte	0,0
+@@ -611,7 +611,7 @@ alt_map:
+ 	.fill	16,1,0		/* 3A-49 */
+ 	.byte	0,0,0,0,0	/* 4A-4E */
+ 	.byte	0,0,0,0,0,0,0	/* 4F-55 */
+-	.byte	'|
++	.ascii	"\\"
+ 	.fill	10,1,0
+ 
+ #else
+@@ -623,30 +623,26 @@ alt_map:
+  */
+ do_self:
+ 	lea	alt_map,%ebx
+-	testb	$0x20,mode		/* alt-gr */
++	testb	$0x20,_kmode		/* alt-gr */
+ 	jne	1f
+ 	lea	shift_map,%ebx
+-	testb	$0x03,mode
++	testb	$0x0f,_kmode
+ 	jne	1f
+ 	lea	key_map,%ebx
+ 1:	movb	(%ebx,%eax),%al
+ 	orb	%al,%al
+ 	je	none
+-	testb	$0x4c,mode		/* ctrl or caps */
++	testb	$0x4c,_kmode		/* ctrl or caps */
+ 	je	2f
+ 	cmpb	$'a,%al
+ 	jb	2f
+ 	cmpb	$'},%al
+ 	ja	2f
+ 	subb	$32,%al
+-2:	testb	$0x0c,mode		/* ctrl */
++2:	testb	$0x0c,_kmode		/* ctrl */
+ 	je	3f
+-	cmpb	$64,%al
+-	jb	3f
+-	cmpb	$64+32,%al
+-	jae	3f
+-	subb	$64,%al
+-3:	testb	$0x10,mode		/* left alt */
++	andb	$0x1f,%al
++3:	testb	$0x10,_kmode		/* left alt */
+ 	je	4f
+ 	orb	$0x80,%al
+ 4:	andl	$0xff,%eax
+@@ -711,19 +707,19 @@ key_table:
+ 	.long	do_self,do_self,do_self,do_self	/* 10-13 q w e r */
+ 	.long	do_self,do_self,do_self,do_self	/* 14-17 t y u i */
+ 	.long	do_self,do_self,do_self,do_self	/* 18-1B o p } ^ */
+-	.long	do_self,ctrl,do_self,do_self	/* 1C-1F enter ctrl a s */
++	.long	enter,ctrl,do_self,do_self	/* 1C-1F enter ctrl a s */
+ 	.long	do_self,do_self,do_self,do_self	/* 20-23 d f g h */
+ 	.long	do_self,do_self,do_self,do_self	/* 24-27 j k l | */
+ 	.long	do_self,do_self,lshift,do_self	/* 28-2B { para lshift , */
+ 	.long	do_self,do_self,do_self,do_self	/* 2C-2F z x c v */
+ 	.long	do_self,do_self,do_self,do_self	/* 30-33 b n m , */
+-	.long	do_self,minus,rshift,do_self	/* 34-37 . - rshift * */
++	.long	do_self,slash,rshift,star	/* 34-37 . - rshift * */
+ 	.long	alt,do_self,caps,func		/* 38-3B alt sp caps f1 */
+ 	.long	func,func,func,func		/* 3C-3F f2 f3 f4 f5 */
+ 	.long	func,func,func,func		/* 40-43 f6 f7 f8 f9 */
+ 	.long	func,num,scroll,cursor		/* 44-47 f10 num scr home */
+-	.long	cursor,cursor,do_self,cursor	/* 48-4B up pgup - left */
+-	.long	cursor,cursor,do_self,cursor	/* 4C-4F n5 right + end */
++	.long	cursor,cursor,minus,cursor	/* 48-4B up pgup - left */
++	.long	cursor,cursor,plus,cursor	/* 4C-4F n5 right + end */
+ 	.long	cursor,cursor,cursor,cursor	/* 50-53 dn pgdn ins del */
+ 	.long	none,none,do_self,func		/* 54-57 sysreq ? < f11 */
+ 	.long	func,none,none,none		/* 58-5B f12 ? ? ? */
+diff --git a/kernel/chr_drv/rs_io.s b/kernel/chr_drv/rs_io.s
+index 520be1f..ea62e41 100644
+--- a/kernel/chr_drv/rs_io.s
++++ b/kernel/chr_drv/rs_io.s
+@@ -13,7 +13,7 @@
+ .text
+ .globl _rs1_interrupt,_rs2_interrupt
+ 
+-size	= 1024				/* must be power of two !
++size	= 2048				/* must be power of two !
+ 					   and must match the value
+ 					   in tty_io.c!!! */
+ 
+@@ -29,14 +29,20 @@ startup	= 256		/* chars left in write queue when we restart it */
+ /*
+  * These are the actual interrupt routines. They look where
+  * the interrupt is coming from, and take appropriate action.
++ *
++ * rs1_interrupt (IRQ 4) takes care of com1 and com3
++ * rs2_interrupt (IRQ 3) takes care of com2 and com4
+  */
+ .align 2
+ _rs1_interrupt:
+ 	pushl	$_table_list+8
++	pushl	$_table_list+24
+ 	jmp	rs_int
++
+ .align 2
+ _rs2_interrupt:
+ 	pushl	$_table_list+16
++	pushl	$_table_list+32
+ rs_int:
+ 	cld
+ 	pushl	%edx
+@@ -50,32 +56,39 @@ rs_int:
+ 	pushl	$0x10
+ 	pop	%es
+ 	movl	24(%esp),%edx
++	call	do_rs_intr
++	movl	28(%esp),%edx
++	call	do_rs_intr
++	movb	$0x20,%al
++	outb	%al,$0x20	/* EOI */
++	pop	%ds
++	pop	%es
++	popl	%eax
++	popl	%ebx
++	popl	%ecx
++	popl	%edx
++	addl	$8,%esp		# jump over the _table_list entries
++	iret
++
++do_rs_intr:
++	pushl	%edx
+ 	movl	(%edx),%edx
+ 	movl	rs_addr(%edx),%edx
+ 	addl	$2,%edx		/* interrupt ident. reg */
+-rep_int:
+-	xorl	%eax,%eax
++1:	xorl	%eax,%eax
+ 	inb	%dx,%al
+ 	testb	$1,%al
+-	jne	end
++	jne	2f
+ 	cmpb	$6,%al		/* this shouldn't happen, but ... */
+-	ja	end
+-	movl	24(%esp),%ecx
++	ja	2f
++	movl	(%esp),%ecx
+ 	pushl	%edx
+ 	subl	$2,%edx
+ 	call	jmp_table(,%eax,2)		/* NOTE! not *4, bit0 is 0 already */
+ 	popl	%edx
+-	jmp	rep_int
+-end:	movb	$0x20,%al
+-	outb	%al,$0x20	/* EOI */
+-	pop	%ds
+-	pop	%es
+-	popl	%eax
+-	popl	%ebx
+-	popl	%ecx
+-	popl	%edx
+-	addl	$4,%esp		# jump over _table_list entry
+-	iret
++	jmp	1b
++2:	popl	%edx
++	ret
+ 
+ jmp_table:
+ 	.long	modem_status,write_char,read_char,line_status
+@@ -112,7 +125,7 @@ read_char:
+ 
+ .align 2
+ mask_table:
+-	.long 0,4,8
++	.long 0,4,8,16,32
+ 
+ .align 2
+ write_char:
+diff --git a/kernel/chr_drv/serial.c b/kernel/chr_drv/serial.c
+index 2334e50..741cc43 100644
+--- a/kernel/chr_drv/serial.c
++++ b/kernel/chr_drv/serial.c
+@@ -34,6 +34,16 @@ static void com2_timer(void)
+ 	copy_to_cooked(tty_table+65);
+ }
+ 
++static void com3_timer(void)
++{
++	copy_to_cooked(tty_table+66);
++}
++
++static void com4_timer(void)
++{
++	copy_to_cooked(tty_table+67);
++}
++
+ static inline void do_rs_write(unsigned int port)
+ {
+ 	char c;
+@@ -66,17 +76,55 @@ static void com2_timeout(void)
+ 	do_rs_write(1);
+ }
+ 
++static void com3_timeout(void)
++{
++	do_rs_write(2);
++}
++
++static void com4_timeout(void)
++{
++	do_rs_write(3);
++}
++
+ static void init(int port)
+ {
+ 	outb_p(0x80,port+3);	/* set DLAB of line control reg */
+ 	outb_p(0x30,port);	/* LS of divisor (48 -> 2400 bps */
+ 	outb_p(0x00,port+1);	/* MS of divisor */
+ 	outb_p(0x03,port+3);	/* reset DLAB */
+-	outb_p(0x0b,port+4);	/* set DTR,RTS, OUT_2 */
++	outb_p(0x00,port+4);	/* reset DTR,RTS, OUT_2 */
+ 	outb_p(0x0d,port+1);	/* enable all intrs but writes */
+ 	(void)inb(port);	/* read data port to reset things (?) */
+ }
+ 
++/*
++ * this routine enables interrupts on 'line', and disables them on
++ * 'line ^ 2', as they share the same IRQ. Braindamaged AT hardware.
++ */
++void serial_open(unsigned int line)
++{
++	unsigned short port;
++	unsigned short port2;
++
++	if (line>3)
++		return;
++	port = tty_table[64+line].read_q->data;
++	if (!port)
++		return;
++	port2 = tty_table[64+(line ^ 2)].read_q->data;
++	cli();
++	if (port2)
++		outb_p(0x00,port2+4);
++	outb_p(0x03,port+3);	/* reset DLAB */
++	outb_p(0x0f,port+4);	/* set DTR,RTS, OUT_2 */
++	outb_p(0x0d,port+1);	/* enable all intrs but writes */
++	inb_p(port+5);
++	inb_p(port+0);
++	inb(port+6);
++	inb(port+2);
++	sti();
++}
++
+ void rs_init(void)
+ {
+ /* SERx_TIMER timers are used for receiving: timeout is always 0 (immediate) */
+@@ -84,15 +132,25 @@ void rs_init(void)
+ 	timer_table[SER1_TIMER].expires = 0;
+ 	timer_table[SER2_TIMER].fn = com2_timer;
+ 	timer_table[SER2_TIMER].expires = 0;
++	timer_table[SER3_TIMER].fn = com3_timer;
++	timer_table[SER3_TIMER].expires = 0;
++	timer_table[SER4_TIMER].fn = com4_timer;
++	timer_table[SER4_TIMER].expires = 0;
+ /* SERx_TIMEOUT timers are used for writing: prevent serial lockups */
+ 	timer_table[SER1_TIMEOUT].fn = com1_timeout;
+ 	timer_table[SER1_TIMEOUT].expires = 0;
+ 	timer_table[SER2_TIMEOUT].fn = com2_timeout;
+ 	timer_table[SER2_TIMEOUT].expires = 0;
++	timer_table[SER3_TIMEOUT].fn = com3_timeout;
++	timer_table[SER3_TIMEOUT].expires = 0;
++	timer_table[SER4_TIMEOUT].fn = com4_timeout;
++	timer_table[SER4_TIMEOUT].expires = 0;
+ 	set_intr_gate(0x24,rs1_interrupt);
+ 	set_intr_gate(0x23,rs2_interrupt);
+ 	init(tty_table[64].read_q->data);
+ 	init(tty_table[65].read_q->data);
++	init(tty_table[66].read_q->data);
++	init(tty_table[67].read_q->data);
+ 	outb(inb_p(0x21)&0xE7,0x21);
+ }
+ 
+@@ -108,6 +166,6 @@ void rs_write(struct tty_struct * tty)
+ 	cli();
+ 	if (!EMPTY(tty->write_q))
+ 		outb_p(inb_p(tty->write_q->data+1)|0x02,tty->write_q->data+1);
+-	timer_active |= 3 << SER1_TIMEOUT;
++	timer_active |= 15 << SER1_TIMEOUT;
+ 	sti();
+ }
+diff --git a/kernel/chr_drv/tty_io.c b/kernel/chr_drv/tty_io.c
+index f8f7587..07d7a08 100644
+--- a/kernel/chr_drv/tty_io.c
++++ b/kernel/chr_drv/tty_io.c
+@@ -83,7 +83,9 @@ int fg_console = 0;
+ struct tty_queue * table_list[]={
+ 	con_queues + 0, con_queues + 1,
+ 	rs_queues + 0, rs_queues + 1,
+-	rs_queues + 3, rs_queues + 4
++	rs_queues + 3, rs_queues + 4,
++	rs_queues + 6, rs_queues + 7,
++	rs_queues + 9, rs_queues + 10
+ 	};
+ 
+ void change_console(unsigned int new_console)
+@@ -122,15 +124,27 @@ void copy_to_cooked(struct tty_struct * tty)
+ {
+ 	unsigned char c;
+ 
+-	if (!(tty->read_q || tty->write_q || tty->secondary)) {
++	if (!(tty && tty->write && tty->read_q &&
++	    tty->write_q && tty->secondary)) {
+ 		printk("copy_to_cooked: missing queues\n\r");
+ 		return;
+ 	}
++	cli();
++	if (tty->busy) {
++		sti();
++		return;
++	}
++	tty->busy = 1;
++	sti();
+ 	while (1) {
+ 		if (EMPTY(tty->read_q))
+ 			break;
+-		if (FULL(tty->secondary))
++		if (FULL(tty->secondary)) {
++			if (tty->secondary->proc_list)
++				if (tty->secondary->proc_list != current)
++					current->counter = 0;
+ 			break;
++		}
+ 		GETCH(tty->read_q,c);
+ 		if (c==13) {
+ 			if (I_CRNL(tty))
+@@ -153,7 +167,6 @@ void copy_to_cooked(struct tty_struct * tty)
+ 						if (c<32)
+ 							PUTCH(127,tty->write_q);
+ 						PUTCH(127,tty->write_q);
+-						tty->write(tty);
+ 					}
+ 					DEC(tty->secondary->head);
+ 				}
+@@ -170,7 +183,6 @@ void copy_to_cooked(struct tty_struct * tty)
+ 					if (c<32)
+ 						PUTCH(127,tty->write_q);
+ 					PUTCH(127,tty->write_q);
+-					tty->write(tty);
+ 				}
+ 				DEC(tty->secondary->head);
+ 				continue;
+@@ -180,13 +192,11 @@ void copy_to_cooked(struct tty_struct * tty)
+ 			if ((STOP_CHAR(tty) != _POSIX_VDISABLE) &&
+ 			    (c==STOP_CHAR(tty))) {
+ 				tty->stopped=1;
+-				tty->write(tty);
+ 				continue;
+ 			}
+ 			if ((START_CHAR(tty) != _POSIX_VDISABLE) &&
+ 			    (c==START_CHAR(tty))) {
+ 				tty->stopped=0;
+-				tty->write(tty);
+ 				continue;
+ 			}
+ 		}
+@@ -221,10 +231,12 @@ void copy_to_cooked(struct tty_struct * tty)
+ 			} else
+ 				PUTCH(c,tty->write_q);
+ 		}
+-		tty->write(tty);
+ 		PUTCH(c,tty->secondary);
+ 	}
+-	wake_up(&tty->secondary->proc_list);
++	tty->write(tty);
++	tty->busy = 0;
++	if (!EMPTY(tty->secondary))
++		wake_up(&tty->secondary->proc_list);
+ }
+ 
+ /*
+@@ -270,7 +282,8 @@ int tty_read(unsigned channel, char * buf, int nr, unsigned short flags)
+ 	tty = TTY_TABLE(channel);
+ 	if (!(tty->read_q && tty->secondary))
+ 		return -EIO;
+-	if ((current->tty == channel) && (tty->pgrp != current->pgrp))
++	if ((tty->pgrp > 0) && (current->tty == channel) &&
++	    (tty->pgrp != current->pgrp))
+ 		return(tty_signal(SIGTTIN, tty));
+ 	if (channel & 0x80)
+ 		other_tty = tty_table + (channel ^ 0x40);
+@@ -295,15 +308,14 @@ int tty_read(unsigned channel, char * buf, int nr, unsigned short flags)
+ 	copy_to_cooked(tty);
+ 	while (nr>0) {
+ 		if (other_tty && other_tty->write)
+-			other_tty->write(other_tty);
++			TTY_WRITE(other_tty);
+ 		cli();
+ 		if (EMPTY(tty->secondary) || (L_CANON(tty) &&
+ 		    !FULL(tty->read_q) && !tty->secondary->data)) {
+-			if (!current->timeout ||
+-			  (current->signal & ~current->blocked)) {
+-				sti();
++			if (!current->timeout)
++				break;
++			if (current->signal & ~current->blocked)
+ 				break;
+-			}
+ 			if (IS_A_PTY_SLAVE(channel) && C_HUP(other_tty))
+ 				break;
+ 			interruptible_sleep_on(&tty->secondary->proc_list);
+@@ -329,11 +341,12 @@ int tty_read(unsigned channel, char * buf, int nr, unsigned short flags)
+ 				break;
+ 		} while (nr>0 && !EMPTY(tty->secondary));
+ 		wake_up(&tty->read_q->proc_list);
+-		if (time)
+-			current->timeout = time+jiffies;
+ 		if (L_CANON(tty) || b-buf >= minimum)
+ 			break;
++		if (time)
++			current->timeout = time+jiffies;
+ 	}
++	sti();
+ 	current->timeout = 0;
+ 	if (b-buf)
+ 		return b-buf;
+@@ -355,9 +368,13 @@ int tty_write(unsigned channel, char * buf, int nr)
+ 	tty = TTY_TABLE(channel);
+ 	if (!(tty->write_q && tty->write))
+ 		return -EIO;
+-	if (L_TOSTOP(tty) &&
++	if (L_TOSTOP(tty) &&  (tty->pgrp > 0) &&
+ 	    (current->tty == channel) && (tty->pgrp != current->pgrp))
+ 		return(tty_signal(SIGTTOU, tty));
++	if (nr < 0)
++		return -EINVAL;
++	if (!nr)
++		return 0;
+ 	while (nr>0) {
+ 		sleep_if_full(tty->write_q);
+ 		if (current->signal & ~current->blocked)
+@@ -381,11 +398,15 @@ int tty_write(unsigned channel, char * buf, int nr)
+ 			cr_flag = 0;
+ 			PUTCH(c,tty->write_q);
+ 		}
+-		tty->write(tty);
++		TTY_WRITE(tty);
+ 		if (nr>0)
+ 			schedule();
+ 	}
+-	return (b-buf);
++	if (b-buf)
++		return b-buf;
++	if (current->signal & ~current->blocked)
++		return -ERESTARTSYS;
++	return 0;
+ }
+ 
+ void chr_dev_init(void)
+@@ -402,10 +423,14 @@ void tty_init(void)
+ 	rs_queues[1] = (struct tty_queue) {0x3f8,0,0,0,""};
+ 	rs_queues[3] = (struct tty_queue) {0x2f8,0,0,0,""};
+ 	rs_queues[4] = (struct tty_queue) {0x2f8,0,0,0,""};
++	rs_queues[6] = (struct tty_queue) {0x3e8,0,0,0,""};
++	rs_queues[7] = (struct tty_queue) {0x3e8,0,0,0,""};
++	rs_queues[9] = (struct tty_queue) {0x2e8,0,0,0,""};
++	rs_queues[10] = (struct tty_queue) {0x2e8,0,0,0,""};
+ 	for (i=0 ; i<256 ; i++) {
+ 		tty_table[i] =  (struct tty_struct) {
+ 			{0, 0, 0, 0, 0, INIT_C_CC},
+-			0, 0, 0, {0,0,0,0},
++			-1, 0, 0, 0, {0,0,0,0},
+ 			NULL, NULL, NULL, NULL
+ 		};
+ 	}
+@@ -418,9 +443,10 @@ void tty_init(void)
+ 			IXON | ISIG | ICANON | ECHO | ECHOCTL | ECHOKE,
+ 			0,		/* console termio */
+ 			INIT_C_CC},
+-			0,			/* initial pgrp */
++			-1,			/* initial pgrp */
+ 			0,			/* initial session */
+ 			0,			/* initial stopped */
++			0,			/* initial busy */
+ 			{video_num_lines,video_num_columns,0,0},
+ 			con_write,
+ 			con_queues+0+i*3,con_queues+1+i*3,con_queues+2+i*3
+@@ -434,6 +460,7 @@ void tty_init(void)
+ 			0,
+ 			0,
+ 			INIT_C_CC},
++			-1,
+ 			0,
+ 			0,
+ 			0,
+@@ -450,6 +477,7 @@ void tty_init(void)
+ 			0,
+ 			0,
+ 			INIT_C_CC},
++			-1,
+ 			0,
+ 			0,
+ 			0,
+@@ -464,6 +492,7 @@ void tty_init(void)
+ 			IXON | ISIG | ICANON,
+ 			0,
+ 			INIT_C_CC},
++			-1,
+ 			0,
+ 			0,
+ 			0,
+diff --git a/kernel/chr_drv/tty_ioctl.c b/kernel/chr_drv/tty_ioctl.c
+index b63f14d..655cf59 100644
+--- a/kernel/chr_drv/tty_ioctl.c
++++ b/kernel/chr_drv/tty_ioctl.c
+@@ -53,7 +53,12 @@ static void flush(struct tty_queue * queue)
+ 
+ static void wait_until_sent(struct tty_struct * tty)
+ {
+-	/* do nothing - not implemented */
++	cli();
++	while (!(current->signal & ~current->blocked) && !EMPTY(tty->write_q)) {
++		current->counter = 0;
++		interruptible_sleep_on(&tty->write_q->proc_list);
++	}
++	sti();
+ }
+ 
+ static void send_break(struct tty_struct * tty)
+@@ -137,7 +142,7 @@ static int get_termio(struct tty_struct * tty, struct termio * termio)
+ }
+ 
+ /*
+- * This only works as the 386 is low-byt-first
++ * This only works as the 386 is low-byte-first
+  */
+ static int set_termio(struct tty_struct * tty, struct termio * termio,
+ 			int channel)
+@@ -255,11 +260,11 @@ int tty_ioctl(int dev, int cmd, int arg)
+ 			switch (arg) {
+ 			case TCOOFF:
+ 				tty->stopped = 1;
+-				tty->write(tty);
++				TTY_WRITE(tty);
+ 				return 0;
+ 			case TCOON:
+ 				tty->stopped = 0;
+-				tty->write(tty);
++				TTY_WRITE(tty);
+ 				return 0;
+ 			case TCIOFF:
+ 				if (STOP_CHAR(tty))
+diff --git a/kernel/exit.c b/kernel/exit.c
+index 06029c1..24762b1 100644
+--- a/kernel/exit.c
++++ b/kernel/exit.c
+@@ -361,7 +361,7 @@ volatile void do_exit(long code)
+ 			tty = TTY_TABLE(current->tty);
+ 			if (tty->pgrp > 0)
+ 				kill_pg(tty->pgrp, SIGHUP, 1);
+-			tty->pgrp = 0;
++			tty->pgrp = -1;
+ 			tty->session = 0;
+ 		}
+ 		for (p = &LAST_TASK ; p > &FIRST_TASK ; --p)
+diff --git a/mm/Makefile b/mm/Makefile
+index a5b5e2e..8192377 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -17,8 +17,6 @@ CPP	=gcc -E -nostdinc -I../include
+ 
+ OBJS	= memory.o swap.o
+ 
+-all: mm.o
+-
+ mm.o: $(OBJS)
+ 	$(LD) -r -o mm.o $(OBJS)
+ 
+diff --git a/mm/memory.c b/mm/memory.c
+index 10eff1a..9aeb2bf 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -213,7 +213,13 @@ static unsigned long put_page(unsigned long page,unsigned long address)
+ 		*page_table = tmp | 7;
+ 		page_table = (unsigned long *) tmp;
+ 	}
+-	page_table[(address>>12) & 0x3ff] = page | 7;
++	page_table += (address>>12) & 0x3ff;
++	if (*page_table) {
++		printk("put_page: page already exists\n");
++		*page_table = 0;
++		invalidate();
++	}
++	*page_table = page | 7;
+ /* no need for invalidate */
+ 	return page;
+ }
+@@ -243,7 +249,13 @@ unsigned long put_dirty_page(unsigned long page, unsigned long address)
+ 		*page_table = tmp|7;
+ 		page_table = (unsigned long *) tmp;
+ 	}
+-	page_table[(address>>12) & 0x3ff] = page | (PAGE_DIRTY | 7);
++	page_table += (address>>12) & 0x3ff;
++	if (*page_table) {
++		printk("put_dirty_page: page already exists\n");
++		*page_table = 0;
++		invalidate();
++	}
++	*page_table = page | (PAGE_DIRTY | 7);
+ /* no need for invalidate */
+ 	return page;
+ }
+@@ -296,8 +308,10 @@ repeat:
+  */
+ void do_wp_page(unsigned long error_code,unsigned long address)
+ {
+-	if (address < TASK_SIZE)
++	if (address < TASK_SIZE) {
+ 		printk("\n\rBAD! KERNEL MEMORY WP-ERR!\n\r");
++		do_exit(SIGSEGV);
++	}
+ 	if (address - current->start_code >= TASK_SIZE) {
+ 		printk("Bad things happen: page error in do_wp_page\n\r");
+ 		do_exit(SIGSEGV);
+@@ -305,7 +319,6 @@ void do_wp_page(unsigned long error_code,unsigned long address)
+ 	un_wp_page((unsigned long *)
+ 		(((address>>10) & 0xffc) + (0xfffff000 &
+ 		*((unsigned long *) ((address>>20) &0xffc)))));
+-
+ }
+ 
+ void write_verify(unsigned long address)
+@@ -436,8 +449,10 @@ void do_no_page(unsigned long error_code,
+ 	if (last_checked >= CHECK_LAST_NR)
+ 		last_checked = 0;
+ 	last_pages[last_checked] = address & 0xfffff000;
+-	if (address < TASK_SIZE)
++	if (address < TASK_SIZE) {
+ 		printk("\n\rBAD!! KERNEL PAGE MISSING\n\r");
++		do_exit(SIGSEGV);
++	}
+ 	if (address - tsk->start_code >= TASK_SIZE) {
+ 		printk("Bad things happen: nonexistent page error in do_no_page\n\r");
+ 		do_exit(SIGSEGV);
+diff --git a/mm/swap.c b/mm/swap.c
+index 4c621d0..5c7e883 100644
+--- a/mm/swap.c
++++ b/mm/swap.c
+@@ -155,37 +155,38 @@ int swap_out(void)
+ 	static int dir_entry = 1024;
+ 	static int page_entry = -1;
+ 	int counter = VM_PAGES;
+-	int pg_table = 0;
++	int pg_table;
+ 
+-repeat:
+-	while (counter > 0) {
++check_dir:
++	if (counter < 0)
++		goto no_swap;
++	if (dir_entry >= 1024)
++		dir_entry = FIRST_VM_PAGE>>10;
++	if (!(1 & (pg_table = pg_dir[dir_entry]))) {
++		if (pg_table) {
++			printk("bad page-table at pg_dir[%d]: %08x\n\r",
++				dir_entry,pg_table);
++			pg_dir[dir_entry] = 0;
++		}
+ 		counter -= 1024;
+ 		dir_entry++;
+-		if (dir_entry >= 1024)
+-			dir_entry = FIRST_VM_PAGE>>10;
+-		if (pg_table = pg_dir[dir_entry])
+-			break;
+-	}
+-	if (counter <= 0) {
+-		printk("Out of swap-memory\n");
+-		return 0;
+-	}
+-	if (!(pg_table & 1)) {
+-		printk("bad page-table at pg_dir[%d]: %08x\n\r",dir_entry,
+-			pg_table);
+-		return 0;
++		goto check_dir;
+ 	}
+ 	pg_table &= 0xfffff000;
+-	while (counter > 0) {
+-		counter--;
+-		page_entry++;
+-		if (page_entry >= 1024) {
+-			page_entry = -1;
+-			goto repeat;
+-		}
+-		if (try_to_swap_out(page_entry + (unsigned long *) pg_table))
+-			return 1;
++check_table:
++	if (counter < 0)
++		goto no_swap;
++	counter--;
++	page_entry++;
++	if (page_entry >= 1024) {
++		page_entry = -1;
++		dir_entry++;
++		goto check_dir;
+ 	}
++	if (try_to_swap_out(page_entry + (unsigned long *) pg_table))
++		return 1;
++	goto check_table;
++no_swap:
+ 	printk("Out of swap-memory\n\r");
+ 	return 0;
+ }
+-- 
+2.9.3
+

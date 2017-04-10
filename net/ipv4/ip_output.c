@@ -8,9 +8,9 @@
  * Version:	@(#)ip.c	1.0.16b	9/1/93
  *
  * Authors:	Ross Biro, <bir7@leland.Stanford.Edu>
- *		Fred N. van Kempen, <waltje@uWalt.NL.Mugnet.ORG>
- *		Donald Becker, <becker@super.org>
- *		Alan Cox, <Alan.Cox@linux.org>
+ *		Fred N. van Kempen, <waltje@linux.com>
+ *		Donald Becker, <becker@cesdis.gsfc.nasa.gov>
+ *		Alan Cox, <alan@lxorguk.ukuu.org.uk>
  *		Richard Underwood
  *		Stefan Becker, <stefanb@yello.ping.de>
  *		Jorge Cwik, <jorge@laser.satlink.net>
@@ -19,13 +19,20 @@
  *	See ip_input.c for original log
  *
  *	Fixes:
- *		Alan Cox	:	Missing nonblock feature in ip_build_xmit.
- *		Mike Kilburn	:	htons() missing in ip_build_xmit.
- *		Bradford Johnson:	Fix faulty handling of some frames when 
- *					no route is found.
- *		Alexander Demenshin:	Missing sk/skb free in ip_queue_xmit
+ *			 Alan Cox:	Missing nonblock feature in
+ *					ip_build_xmit
+ *		     Mike Kilburn:	htons() missing in ip_build_xmit
+ *		 Bradford Johnson:	Fix faulty handling of some frames
+ *					when no route is found
+ *	      Alexander Demenshin:	Missing sk/skb free in ip_queue_xmit
  *					(in case if packet not accepted by
  *					output firewall rules)
+ *		     Elliot Poger:	Added support for SO_BINDTODEVICE
+ *	      Juan Jose Ciarlante:	sk/skb source address rewriting
+ * Elena Apolinario Fdez de Sousa
+ *    + Juan-Mariano de Goyeneche:	ipmr_forward never received multicast
+ *					traffic generated locally
+ *		 Andrea Arcangeli:	Fix for the 65468 bytes ping-exploit
  */
 
 #include <asm/segment.h>
@@ -64,6 +71,81 @@
 #include <linux/firewall.h>
 #include <linux/mroute.h>
 #include <net/netlink.h>
+
+/*
+ *	Allows dynamic re-writing of packet's addresses.
+ *      value & 3    do rewrite
+ *      value & 2    be verbose
+ *      value & 4    rewrite connected sockets too
+ *	Currently implemented:
+ *		tcp_output.c   if sk->state!=TCP_SYN_SENT
+ *		ip_masq.c      if no packet has been received by tunnel
+ */
+int sysctl_ip_dynaddr = 0;
+
+/*
+ *	Very Promisc source address re-assignation.
+ *	ONLY acceptable if socket is NOT connected yet.
+ *      Caller already checked sysctl_ip_dynaddr & 3 and EITHER
+ *      sysctl_ip_dynaddr & 4 OR consistent sk->state
+ *	 (TCP_SYN_SENT for tcp, udp-connect sockets are set TCP_ESTABLISHED)
+ */
+
+int ip_rewrite_addrs (struct sock *sk, struct sk_buff *skb, struct device *dev)
+{
+	u32 new_saddr = dev->pa_addr;
+        struct iphdr *iph;
+        
+        /*
+         *	Be carefull: new_saddr must be !0
+         */
+        if (!new_saddr) {
+                printk(KERN_WARNING "ip_rewrite_addrs(): NULL device \"%s\" addr\n",
+                       dev->name);
+                return 0;
+        }
+        
+        /*
+         *	Ouch!, this should not happen.
+         */
+        if (!sk->saddr || !sk->rcv_saddr) {
+                printk(KERN_WARNING "ip_rewrite_addrs(): not valid sock addrs: saddr=%08lX rcv_saddr=%08lX",
+                       ntohl(sk->saddr), ntohl(sk->rcv_saddr));
+                return 0;
+        }
+        
+        /*
+         *	Be verbose if sysctl value & 2
+         */
+        if (sysctl_ip_dynaddr & 2) {
+                printk(KERN_INFO "ip_rewrite_addrs(): shifting saddr from %s",
+                       in_ntoa(skb->saddr));
+                printk(" to %s (state %d)\n", in_ntoa(new_saddr), sk->state);
+        }
+        
+        iph = skb->ip_hdr;
+
+        if (new_saddr != iph->saddr) {
+                iph->saddr = new_saddr;
+                skb->saddr = new_saddr;
+                ip_send_check(iph);
+        } else if (sysctl_ip_dynaddr & 2) {
+                printk(KERN_WARNING "ip_rewrite_addrs(): skb already changed (???).\n");
+                return 0;
+        }
+        
+        /*
+         *	Maybe whe are in a skb chain loop and socket address has
+         *	yet been 'damaged'.
+         */
+        if (new_saddr != sk->saddr) {
+                sk->saddr = new_saddr;
+                sk->rcv_saddr = new_saddr;
+                sk->prot->rehash(sk);
+        } else if (sysctl_ip_dynaddr & 2)
+                printk(KERN_NOTICE "ip_rewrite_addrs(): no change needed for sock\n");
+        return 1;
+}
 
 /*
  *	Loop a packet back to the sender.
@@ -107,7 +189,7 @@ static void ip_loopback(struct device *old_dev, struct sk_buff *skb)
 	/* Recurse. The device check against IFF_LOOPBACK will stop infinite recursion */
 		
 	/*printk("Loopback output queued [%lX to %lX].\n", newskb->ip_hdr->saddr,newskb->ip_hdr->daddr);*/
-	ip_queue_xmit(NULL, dev, newskb, 1);
+	ip_queue_xmit(NULL, dev, newskb, 2);
 }
 
 
@@ -123,13 +205,13 @@ int ip_send(struct rtable * rt, struct sk_buff *skb, __u32 daddr, int len, struc
 	skb->dev = dev;
 	skb->arp = 1;
 	skb->protocol = htons(ETH_P_IP);
+	skb_reserve(skb,(dev->hard_header_len+15)&~15);	/* 16 byte aligned IP headers are always good */
 	if (dev->hard_header)
 	{
 		/*
 		 *	Build a hardware header. Source address is our mac, destination unknown
 		 *  	(rebuild header will sort this out)
 		 */
-		skb_reserve(skb,(dev->hard_header_len+15)&~15);	/* 16 byte aligned IP headers are good */
 		if (rt && dev == rt->rt_dev && rt->rt_hh)
 		{
 			memcpy(skb_push(skb,dev->hard_header_len),rt->rt_hh->hh_data,dev->hard_header_len);
@@ -160,9 +242,9 @@ static int ip_send_room(struct rtable * rt, struct sk_buff *skb, __u32 daddr, in
 	skb->dev = dev;
 	skb->arp = 1;
 	skb->protocol = htons(ETH_P_IP);
+	skb_reserve(skb,MAX_HEADER);
 	if (dev->hard_header)
 	{
-		skb_reserve(skb,MAX_HEADER);
 		if (rt && dev == rt->rt_dev && rt->rt_hh)
 		{
 			memcpy(skb_push(skb,dev->hard_header_len),rt->rt_hh->hh_data,dev->hard_header_len);
@@ -218,7 +300,7 @@ int ip_build_header(struct sk_buff *skb, __u32 saddr, __u32 daddr,
 #endif
 	if (rp)
 	{
-		rt = ip_check_route(rp, daddr, skb->localroute);
+		rt = ip_check_route(rp, daddr, skb->localroute, *dev);
 		/*
 		 * If rp != NULL rt_put following below should not
 		 * release route, so that...
@@ -227,7 +309,7 @@ int ip_build_header(struct sk_buff *skb, __u32 saddr, __u32 daddr,
 			atomic_inc(&rt->rt_refcnt);
 	}
 	else
-		rt = ip_rt_route(daddr, skb->localroute);
+		rt = ip_rt_route(daddr, skb->localroute, *dev);
 
 
 	if (*dev == NULL)
@@ -320,6 +402,44 @@ void ip_send_check(struct iphdr *iph)
 	iph->check = ip_fast_csum((unsigned char *)iph, iph->ihl);
 }
 
+
+/*
+ *	If a sender wishes the packet to remain unfreed
+ *	we add it to his send queue. This arguably belongs
+ *	in the TCP level since nobody else uses it. BUT
+ *	remember IPng might change all the rules.
+ */
+static inline void add_to_send_queue(struct sock * sk, struct sk_buff * skb)
+{
+	unsigned long flags;
+
+	/* The socket now has more outstanding blocks */
+	sk->packets_out++;
+
+	/* Protect the list for a moment */
+	save_flags(flags);
+	cli();
+
+	if (skb->link3 != NULL)
+	{
+		NETDEBUG(printk("ip.c: link3 != NULL\n"));
+		skb->link3 = NULL;
+	}
+	if (sk->send_head == NULL)
+	{
+		sk->send_tail = skb;
+		sk->send_head = skb;
+		sk->send_next = skb;
+	}
+	else
+	{
+		sk->send_tail->link3 = skb;
+		sk->send_tail = skb;
+	}
+	restore_flags(flags);
+}
+
+
 /*
  * Queues a packet to be sent, and starts the transmitter
  * if necessary.  if free = 1 then we free the block after
@@ -332,15 +452,8 @@ void ip_send_check(struct iphdr *iph)
 void ip_queue_xmit(struct sock *sk, struct device *dev,
 	      struct sk_buff *skb, int free)
 {
+	unsigned int tot_len;
 	struct iphdr *iph;
-/*	unsigned char *ptr;*/
-
-	/* Sanity check */
-	if (dev == NULL)
-	{
-		NETDEBUG(printk("IP: ip_queue_xmit dev = NULL\n"));
-		return;
-	}
 
 	IS_SKB(skb);
 
@@ -348,7 +461,7 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 	 *	Do some book-keeping in the packet for later
 	 */
 
-
+	skb->sk = sk;
 	skb->dev = dev;
 	skb->when = jiffies;
 
@@ -361,32 +474,30 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 	 */
 
 	iph = skb->ip_hdr;
-	iph->tot_len = htons(skb->len-(((unsigned char *)iph)-skb->data));
+	tot_len = skb->len - (((unsigned char *)iph) - skb->data);
+	iph->tot_len = htons(tot_len);
 
-	/*
-	 *	No reassigning numbers to fragments...
-	 */
-
-	if(free!=2)
-		iph->id      = htons(ip_id_count++);
-	else
-		free=1;
-
-	/* All buffers without an owner socket get freed */
-	if (sk == NULL)
-		free = 1;
+	switch (free) {
+		/* No reassigning numbers to fragments... */
+		default:
+			free = 1;
+			break;
+		case 0:
+			add_to_send_queue(sk, skb);
+			/* fall through */
+		case 1:
+			iph->id = htons(ip_id_count++);
+	}
 
 	skb->free = free;
 
+	/* Sanity check */
+	if (dev == NULL)
+		goto no_device;
+
 #ifdef CONFIG_FIREWALL
-	if(call_out_firewall(PF_INET, skb->dev, iph) < FW_ACCEPT) {
-		/* just don't send this packet */
-		/* and free socket buffers ;) <aldem@barnet.kharkov.ua> */
-		if (free)
-		  skb->sk = sk;		/* I am not sure *this* really need, */
-		kfree_skb(skb, FREE_WRITE);	/* but *this* must be here */
-		return;
-	}
+	if (call_out_firewall(PF_INET, skb->dev, iph, NULL) < FW_ACCEPT)
+		goto out;
 #endif	
 
 	/*
@@ -395,23 +506,14 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 	 *	bits of it.
 	 */
 
-	if(ntohs(iph->tot_len)> dev->mtu)
-	{
-		ip_fragment(sk,skb,dev,0);
-		IS_SKB(skb);
-		kfree_skb(skb,FREE_WRITE);
-		return;
-	}
+	if (tot_len > dev->mtu)
+		goto fragment;
 
 	/*
 	 *	Add an IP checksum
 	 */
 
 	ip_send_check(iph);
-
-	/*
-	 *	Print the frame when debugging
-	 */
 
 	/*
 	 *	More debugging. You cannot queue a packet already on a list
@@ -424,56 +526,14 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 	}
 
 	/*
-	 *	If a sender wishes the packet to remain unfreed
-	 *	we add it to his send queue. This arguably belongs
-	 *	in the TCP level since nobody else uses it. BUT
-	 *	remember IPng might change all the rules.
-	 */
-
-	if (!free)
-	{
-		unsigned long flags;
-		/* The socket now has more outstanding blocks */
-
-		sk->packets_out++;
-
-		/* Protect the list for a moment */
-		save_flags(flags);
-		cli();
-
-		if (skb->link3 != NULL)
-		{
-			NETDEBUG(printk("ip.c: link3 != NULL\n"));
-			skb->link3 = NULL;
-		}
-		if (sk->send_head == NULL)
-		{
-			sk->send_tail = skb;
-			sk->send_head = skb;
-		}
-		else
-		{
-			sk->send_tail->link3 = skb;
-			sk->send_tail = skb;
-		}
-		/* skb->link3 is NULL */
-
-		/* Interrupt restore */
-		restore_flags(flags);
-	}
-	else
-		/* Remember who owns the buffer */
-		skb->sk = sk;
-
-	/*
 	 *	If the indicated interface is up and running, send the packet.
 	 */
 	 
 	ip_statistics.IpOutRequests++;
 #ifdef CONFIG_IP_ACCT
-	ip_fw_chk(iph,dev,ip_acct_chain,IP_FW_F_ACCEPT,1);
+	ip_fw_chk(iph,dev,NULL,ip_acct_chain,0,IP_FW_MODE_ACCT_OUT);
 #endif	
-	
+
 #ifdef CONFIG_IP_MULTICAST	
 
 	/*
@@ -504,14 +564,12 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 		}
 		/* Multicasts with ttl 0 must not go beyond the host */
 		
-		if(skb->ip_hdr->ttl==0)
-		{
-			kfree_skb(skb, FREE_READ);
-			return;
-		}
+		if (iph->ttl==0)
+			goto out;
 	}
 #endif
-	if((dev->flags&IFF_BROADCAST) && (iph->daddr==dev->pa_brdaddr||iph->daddr==0xFFFFFFFF) && !(dev->flags&IFF_LOOPBACK))
+	if ((dev->flags & IFF_BROADCAST) && !(dev->flags & IFF_LOOPBACK)
+	    && (iph->daddr==dev->pa_brdaddr || iph->daddr==0xFFFFFFFF))
 		ip_loopback(dev,skb);
 		
 	if (dev->flags & IFF_UP)
@@ -520,24 +578,28 @@ void ip_queue_xmit(struct sock *sk, struct device *dev,
 		 *	If we have an owner use its priority setting,
 		 *	otherwise use NORMAL
 		 */
+		int priority = SOPRI_NORMAL;
+		if (sk)
+			priority = sk->priority;
 
-		if (sk != NULL)
-		{
-			dev_queue_xmit(skb, dev, sk->priority);
-		}
-		else
-		{
-			dev_queue_xmit(skb, dev, SOPRI_NORMAL);
-		}
+		dev_queue_xmit(skb, dev, priority);
+		return;
 	}
-	else
-	{
-		if(sk)
-			sk->err = ENETDOWN;
-		ip_statistics.IpOutDiscards++;
-		if (free)
-			kfree_skb(skb, FREE_WRITE);
-	}
+	if(sk)
+		sk->err = ENETDOWN;
+	ip_statistics.IpOutDiscards++;
+out:
+	if (free)
+		kfree_skb(skb, FREE_WRITE);
+	return;
+
+no_device:
+	NETDEBUG(printk("IP: ip_queue_xmit dev = NULL\n"));
+	goto out;
+
+fragment:
+	ip_fragment(sk,skb,dev,0);
+	goto out;
 }
 
 
@@ -594,7 +656,7 @@ int ip_build_xmit(struct sock *sk,
 	ip_statistics.IpOutRequests++;
 
 #ifdef CONFIG_IP_MULTICAST	
-	if(sk && MULTICAST(daddr) && *sk->ip_mc_name)
+	if(MULTICAST(daddr) && *sk->ip_mc_name)
 	{
 		dev=dev_get(sk->ip_mc_name);
 		if(!dev)
@@ -610,7 +672,7 @@ int ip_build_xmit(struct sock *sk,
 #endif	
 		rt = ip_check_route(&sk->ip_route_cache, daddr,
 				    sk->localroute || (flags&MSG_DONTROUTE) ||
-				    (opt && opt->is_strictroute));
+				    (opt && opt->is_strictroute), sk->bound_device);
 		if (rt == NULL) 
 		{
 			ip_statistics.IpOutNoRoutes++;
@@ -644,7 +706,12 @@ int ip_build_xmit(struct sock *sk,
 
 	if (!sk->ip_hdrincl) {
 		length += sizeof(struct iphdr);
-		if(opt) length += opt->optlen;
+		if (opt) {
+			/* make sure not to exceed maximum packet size */
+			if (0xffff - length < opt->optlen)
+				return -EMSGSIZE;
+			length += opt->optlen;
+		}
 	}
 
 	if(length <= dev->mtu && !MULTICAST(daddr) && daddr!=0xFFFFFFFF && daddr!=dev->pa_brdaddr)
@@ -712,14 +779,14 @@ int ip_build_xmit(struct sock *sk,
 			getfrag(frag,saddr,(void *)iph,0,length);
 		dev_unlock_list();
 #ifdef CONFIG_FIREWALL
-		if(call_out_firewall(PF_INET, skb->dev, iph)< FW_ACCEPT)
+		if(call_out_firewall(PF_INET, skb->dev, iph, NULL)< FW_ACCEPT)
 		{
 			kfree_skb(skb, FREE_WRITE);
 			return -EPERM;
 		}
 #endif
 #ifdef CONFIG_IP_ACCT
-		ip_fw_chk(iph,dev,ip_acct_chain, IP_FW_F_ACCEPT,1);
+		ip_fw_chk(iph,dev,NULL,ip_acct_chain,0,IP_FW_MODE_ACCT_OUT);
 #endif		
 		if(dev->flags&IFF_UP)
 			dev_queue_xmit(skb,dev,sk->priority);
@@ -730,8 +797,10 @@ int ip_build_xmit(struct sock *sk,
 		}
 		return 0;
 	}
-	length -= sizeof(struct iphdr);
-	if (sk && !sk->ip_hdrincl && opt) 
+	if (!sk->ip_hdrincl)
+		length -= sizeof(struct iphdr);
+		
+	if(opt) 
 	{
 		length -= opt->optlen;
 		fragheaderlen = dev->hard_header_len + sizeof(struct iphdr) + opt->optlen;
@@ -830,6 +899,7 @@ int ip_build_xmit(struct sock *sk,
 		skb->sk = sk;
 		skb->arp = 0;
 		skb->saddr = saddr;
+		skb->daddr = daddr;
 		skb->raddr = raddr;
 		skb_reserve(skb,(dev->hard_header_len+15)&~15);
 		data = skb_put(skb, fraglen-dev->hard_header_len);
@@ -859,6 +929,8 @@ int ip_build_xmit(struct sock *sk,
 						NULL, NULL, 0)>0)
 				skb->arp=1;
 		}
+		else
+			skb->arp = 1;
 		
 		/*
 		 *	Find where to start putting bytes.
@@ -916,7 +988,7 @@ int ip_build_xmit(struct sock *sk,
 		 */
 		 
 #ifdef CONFIG_FIREWALL
-		if(!offset && call_out_firewall(PF_INET, skb->dev, iph) < FW_ACCEPT)
+		if(!offset && call_out_firewall(PF_INET, skb->dev, iph, NULL) < FW_ACCEPT)
 		{
 			kfree_skb(skb, FREE_WRITE);
 			dev_unlock_list();
@@ -924,8 +996,7 @@ int ip_build_xmit(struct sock *sk,
 		}
 #endif		
 #ifdef CONFIG_IP_ACCT
-		if(!offset)
-			ip_fw_chk(iph, dev, ip_acct_chain, IP_FW_F_ACCEPT, 1);
+		ip_fw_chk(iph, dev, NULL, ip_acct_chain, 0, IP_FW_MODE_ACCT_OUT);
 #endif	
 		offset -= (maxfraglen-fragheaderlen);
 		fraglen = maxfraglen;
@@ -938,6 +1009,22 @@ int ip_build_xmit(struct sock *sk,
 	 
 		if (MULTICAST(daddr) && !(dev->flags&IFF_LOOPBACK)) 
 		{
+#ifdef CONFIG_IP_MROUTE
+		/* We need this so that mrouted "hears" packets sent from the
+		   same host it is running on... (jmel) */
+                if (mroute_socket&&(iph->protocol!=IPPROTO_IGMP))
+                {
+			if((skb->ip_hdr->daddr&htonl(0xFFFFFF00))!=htonl(0xE0000000)) 
+			{ 
+				struct sk_buff* skb2=skb_clone(skb, GFP_ATOMIC);                                
+				if(skb2)
+                       		{
+                       		        skb2->free=1;
+                       		        ipmr_forward(skb2, 0);
+                       	 	}
+			}
+                }
+#endif
 			/*
 			 *	Loop back any frames. The check for IGMP_ALL_HOSTS is because
 			 *	you are always magically a member of this group.
@@ -947,7 +1034,7 @@ int ip_build_xmit(struct sock *sk,
 			 
 			if(sk==NULL || sk->ip_mc_loop)
 			{
-				if(skb->daddr==IGMP_ALL_HOSTS || (dev->flags&IFF_ALLMULTI))
+				if(daddr==IGMP_ALL_HOSTS || (dev->flags&IFF_ALLMULTI))
 					ip_loopback(dev,skb);
 				else 
 				{
@@ -970,7 +1057,11 @@ int ip_build_xmit(struct sock *sk,
 			 */
 
 			if(skb->ip_hdr->ttl==0)
-				kfree_skb(skb, FREE_READ);
+			{
+				kfree_skb(skb, FREE_WRITE);
+				nfrags++;
+				continue;
+			}
 		}
 #endif
 
@@ -1115,12 +1206,14 @@ void ip_init(void)
 	ip_udp_init();*/
 
 #ifdef CONFIG_IP_MULTICAST
+#ifdef CONFIG_PROC_FS
 	proc_net_register(&(struct proc_dir_entry) {
 		PROC_NET_IGMP, 4, "igmp",
 		S_IFREG | S_IRUGO, 1, 0, 0,
 		0, &proc_net_inode_operations,
 		ip_mc_procinfo
 	});
+#endif	
 #endif
 }
 

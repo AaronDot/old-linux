@@ -66,7 +66,9 @@ static int do_ioctl(int target, unsigned char * sr_cmd, void * buffer, unsigned 
 	    printk("CDROM not ready.  Make sure there is a disc in the drive.\n");
 	    break;
 	case ILLEGAL_REQUEST:
-	    printk("CDROM (ioctl) reports ILLEGAL REQUEST.\n");
+	  /* CDROMCLOSETRAY should not print an error for caddy drives. */
+	    if (!(sr_cmd[0] == START_STOP && sr_cmd[4] == 0x03))
+	      printk("CDROM (ioctl) reports ILLEGAL REQUEST.\n");
 	    break;
 	default:
 	    printk("SCSI CD error: host %d id %d lun %d return code = %03x\n", 
@@ -517,9 +519,10 @@ int sr_ioctl(struct inode * inode, struct file * file, unsigned int cmd, unsigne
 	return result;
     }
 	
-    case CDROMREADMODE2:
-	return -EINVAL;
+    /* these are compatible with the ide-cd driver */
+    case CDROMREADRAW:
     case CDROMREADMODE1:
+    case CDROMREADMODE2:
 	return -EINVAL;
 	
 	/* block-copy from ../block/sbpcd.c with some adjustments... */
@@ -554,21 +557,30 @@ int sr_ioctl(struct inode * inode, struct file * file, unsigned int cmd, unsigne
 	return (0);
     }
 	
+    case BLKRAGET:
+	if (!arg)
+		return -EINVAL;
+	err = verify_area(VERIFY_WRITE, (int *) arg, sizeof(int));
+	if (err)
+		return err;
+	put_user(read_ahead[MAJOR(inode->i_rdev)], (int *) arg);
+	return 0;
+
     case BLKRASET:
-    {
-	if(!suser())  return -EACCES;
-	if(!(inode->i_rdev)) return -EINVAL;
-	if(arg > 0xff) return -EINVAL;
+	if(!suser())
+        	return -EACCES;
+	if(!(inode->i_rdev))
+        	return -EINVAL;
+	if(arg > 0xff)
+        	return -EINVAL;
 	read_ahead[MAJOR(inode->i_rdev)] = arg;
 	return 0;
-	RO_IOCTLS(dev,arg);
-    }
+
+    RO_IOCTLS(dev,arg);
 
     case CDROMRESET:
-    {
-	invalidate_buffers(MKDEV(MAJOR(inode->i_rdev),MINOR(inode->i_rdev)));
+	invalidate_buffers(inode->i_rdev);
 	return 0;
-    }
 
     default:
 	return scsi_ioctl(scsi_CDs[target].device,cmd,(void *) arg);

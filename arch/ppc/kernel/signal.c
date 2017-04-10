@@ -30,7 +30,7 @@ asmlinkage int sys_sigsuspend(unsigned long set, int p2, int p3, int p4, int p6,
 	mask = current->blocked;
 	current->blocked = set & _BLOCKABLE;
 	regs->gpr[3] = -EINTR;
-#if 0	
+#if 0
 printk("Task: %x[%d] - SIGSUSPEND at %x, Mask: %x\n", current, current->pid, regs->nip, set);	
 #endif
 	while (1) {
@@ -56,7 +56,13 @@ asmlinkage int sys_sigreturn(struct pt_regs *regs)
 	sc++;  /* Pop signal 'context' */
 	if (sc == (struct sigcontext_struct *)(int_regs))
 	{ /* Last stacked signal */
+#if 0	
+		/* This doesn't work - it blows away the return address! */
 		memcpy(regs, int_regs, sizeof(*regs));
+#else
+		/* Don't mess up 'my' stack frame */
+		memcpy(&regs->gpr, &int_regs->gpr, sizeof(*regs)-sizeof(regs->_overhead));
+#endif		
 		if ((int)regs->orig_gpr3 >= 0 &&
 		    ((int)regs->result == -ERESTARTNOHAND ||
 		     (int)regs->result == -ERESTARTSYS ||
@@ -101,7 +107,6 @@ asmlinkage int do_signal(unsigned long oldmask, struct pt_regs * regs)
 	struct sigcontext_struct *sc;
 	struct sigaction * sa;
 	int s = _disable_interrupts();
-
 	while ((signr = current->signal & mask)) {
 #if 0
 		signr = ffz(~signr);  /* Compute bit # */
@@ -111,7 +116,7 @@ asmlinkage int do_signal(unsigned long oldmask, struct pt_regs * regs)
 			if (signr & (1<<bitno)) break;
 		}
 		signr = bitno;
-#endif		
+#endif
 		current->signal &= ~(1<<signr);  /* Clear bit */
 		sa = current->sig->action + signr;
 		signr++;
@@ -143,7 +148,7 @@ asmlinkage int do_signal(unsigned long oldmask, struct pt_regs * regs)
 			if (current->pid == 1)
 				continue;
 			switch (signr) {
-			case SIGCONT: case SIGCHLD: case SIGWINCH:
+			case SIGCONT: case SIGCHLD: case SIGWINCH: case SIGURG:
 				continue;
 
 			case SIGSTOP: case SIGTSTP: case SIGTTIN: case SIGTTOU:
@@ -166,7 +171,6 @@ asmlinkage int do_signal(unsigned long oldmask, struct pt_regs * regs)
 				/* fall through */
 			default:
 				current->signal |= _S(signr & 0x7f);
-				current->flags |= PF_SIGNALED;
 				do_exit(signr);
 			}
 		}

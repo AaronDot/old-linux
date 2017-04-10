@@ -333,7 +333,7 @@ static void log_ultrastor_abort(register struct ultrastor_config *config,
 {
   static char fmt[80] = "abort %d (%x); MSCP free pool: %x;";
   register int i;
-  int flags;
+  unsigned long flags;
   save_flags(flags);
   cli();
 
@@ -681,7 +681,7 @@ int ultrastor_queuecommand(Scsi_Cmnd *SCpnt, void (*done)(Scsi_Cmnd *))
     int mscp_index;
 #endif
     unsigned int status;
-    int flags;
+    unsigned long flags;
 
     /* Next test is for debugging; "can't happen" */
     if ((config.mscp_free & ((1U << ULTRASTOR_MAX_CMDS) - 1)) == 0)
@@ -853,7 +853,7 @@ int ultrastor_abort(Scsi_Cmnd *SCpnt)
       {
 	int port0 = (config.slot << 12) | 0xc80;
 	int i;
-	int flags;
+	unsigned long flags;
 	save_flags(flags);
 	cli();
 	strcpy(out, "OGM %d:%x ICM %d:%x ports:  ");
@@ -879,7 +879,7 @@ int ultrastor_abort(Scsi_Cmnd *SCpnt)
     if (config.slot ? inb(config.icm_address - 1) == 2 :
 	(inb(SYS_DOORBELL_INTR(config.doorbell_address)) & 1))
       {
-	int flags;
+	unsigned long flags;
 	save_flags(flags);
 	printk("Ux4F: abort while completed command pending\n");
 	restore_flags(flags);
@@ -901,7 +901,7 @@ int ultrastor_abort(Scsi_Cmnd *SCpnt)
        and the interrupt handler will call done.  */
     if (config.slot && inb(config.ogm_address - 1) == 0)
       {
-	int flags;
+	unsigned long flags;
 
 	save_flags(flags);
 	cli();
@@ -951,9 +951,9 @@ int ultrastor_abort(Scsi_Cmnd *SCpnt)
     return SCSI_ABORT_SUCCESS;
 }
 
-int ultrastor_reset(Scsi_Cmnd * SCpnt)
+int ultrastor_reset(Scsi_Cmnd * SCpnt, unsigned int reset_flags)
 {
-    int flags;
+    unsigned long flags;
     register int i;
 #if (ULTRASTOR_DEBUG & UD_RESET)
     printk("US14F: reset: called\n");
@@ -1044,7 +1044,7 @@ static void ultrastor_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	printk("Ux4F interrupt: bad MSCP address %x\n", (unsigned int) mscp);
 	/* A command has been lost.  Reset and report an error
 	   for all commands.  */
-	ultrastor_reset(NULL);
+	ultrastor_reset(NULL, 0);
 	return;
     }
 #endif
@@ -1144,8 +1144,13 @@ static void ultrastor_interrupt(int irq, void *dev_id, struct pt_regs *regs)
     else
 	printk("US14F: interrupt: unexpected interrupt\n");
 
-    if (config.slot ? inb(config.icm_address - 1) : (inb(SYS_DOORBELL_INTR(config.doorbell_address)) & 1))
+    if (config.slot ? inb(config.icm_address - 1) :
+       (inb(SYS_DOORBELL_INTR(config.doorbell_address)) & 1))
+#if (ULTRASTOR_DEBUG & UD_MULTI_CMD)
       printk("Ux4F: multiple commands completed\n");
+#else
+      ;
+#endif
 
 #if (ULTRASTOR_DEBUG & UD_INTERRUPT)
     printk("USx4F: interrupt: returning\n");

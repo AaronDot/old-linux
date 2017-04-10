@@ -76,17 +76,22 @@ void rw_swap_page(int rw, unsigned long entry, char * buf, int wait)
 	else
 		kstat.pswpout++;
 	page = mem_map + MAP_NR(buf);
+	atomic_inc(&page->count);
 	wait_on_page(page);
 	if (p->swap_device) {
 		if (!wait) {
-			page->count++;
 			set_bit(PG_free_after, &page->flags);
 			set_bit(PG_decr_after, &page->flags);
 			set_bit(PG_swap_unlock_after, &page->flags);
 			page->swap_unlock_entry = entry;
-			nr_async_pages++;
+			atomic_inc(&nr_async_pages);
 		}
 		ll_rw_page(rw,p->swap_device,offset,buf);
+		/*
+		 * NOTE! We don't decrement the page count if we
+		 * don't wait - that will happen asynchronously
+		 * when the IO completes.
+		 */
 		if (!wait)
 			return;
 		wait_on_page(page);
@@ -130,6 +135,7 @@ void rw_swap_page(int rw, unsigned long entry, char * buf, int wait)
 		ll_rw_swap_file(rw,swapf->i_dev, zones, i,buf);
 	} else
 		printk("rw_swap_page: no swap file or device\n");
+	atomic_dec(&page->count);
 	if (offset && !clear_bit(offset,p->swap_lockmap))
 		printk("rw_swap_page: lock already cleared\n");
 	wake_up(&lock_queue);
@@ -162,9 +168,10 @@ void swap_after_unlock_page (unsigned long entry)
  * asynchronous function now --- we must call wait_on_page afterwards
  * if synchronous IO is required.  
  */
-void ll_rw_page(int rw, kdev_t dev, unsigned long page, char * buffer)
+void ll_rw_page(int rw, kdev_t dev, unsigned long offset, char * buffer)
 {
-	int block = page;
+	int block = offset;
+	struct page *page;
 
 	switch (rw) {
 		case READ:
@@ -179,7 +186,8 @@ void ll_rw_page(int rw, kdev_t dev, unsigned long page, char * buffer)
 		default:
 			panic("ll_rw_page: bad block dev cmd, must be R/W");
 	}
-	if (set_bit(PG_locked, &mem_map[MAP_NR(buffer)].flags))
+	page = mem_map + MAP_NR(buffer);
+	if (set_bit(PG_locked, &page->flags))
 		panic ("ll_rw_page: page already locked");
-	brw_page(rw, (unsigned long) buffer, dev, &block, PAGE_SIZE, 0);
+	brw_page(rw, page, dev, &block, PAGE_SIZE, 0);
 }

@@ -1,4 +1,4 @@
-/* $Id: eexpress.c,v 1.12 1996/04/15 17:27:30 phil Exp $
+/* $Id: eexpress.c,v 1.13.2.2 1997/03/11 05:52:32 davem Exp $
  *
  * Intel EtherExpress device driver for Linux
  *
@@ -7,6 +7,11 @@
  * Changed to support io= irq= by Alan Cox <Alan.Cox@linux.org>
  * Reworked 1995 by John Sullivan <js10039@cam.ac.uk>
  * More fixes by Philip Blundell <pjb27@cam.ac.uk>
+ * Added the Compaq LTE  Alan Cox <alan@redhat.com>
+ *
+ * Note - this driver is experimental still - it has problems on faster
+ * machines. Someone needs to sit down and go through it line by line with
+ * a databook...
  */
 
 /*
@@ -86,7 +91,8 @@
 
 static char version[] = 
 "eexpress.c: v0.10 04-May-95 John Sullivan <js10039@cam.ac.uk>\n"
-"            v0.13 10-Apr-96 Philip Blundell <phil@tazenda.demon.co.uk>\n";
+"            v0.14 19-May-96 Philip Blundell <phil@tazenda.demon.co.uk>\n"
+"            v0.15 04-Aug-98 Alan Cox <alan@redhat.com>\n";
 
 #include <linux/module.h>
 
@@ -103,6 +109,7 @@ static char version[] =
 #include <asm/bitops.h>
 #include <asm/io.h>
 #include <asm/dma.h>
+#include <linux/delay.h>
 #include <linux/errno.h>
 
 #include <linux/netdevice.h>
@@ -446,6 +453,7 @@ static int eexp_xmit(struct sk_buff *buf, struct device *dev)
 		}
 		dev_tint(dev);
 		outb(SIRQ_en|irqrmap[dev->irq],ioaddr+SET_IRQ);
+		dev_kfree_skb(buf, FREE_WRITE);
 		return 0;
 	}
 
@@ -699,11 +707,13 @@ static int eexp_hw_probe(struct device *dev, unsigned short ioaddr)
 	hw_addr[1] = eexp_hw_readeeprom(ioaddr,3);
 	hw_addr[2] = eexp_hw_readeeprom(ioaddr,4);
 
-	if (hw_addr[2]!=0x00aa || ((hw_addr[1] & 0xff00)!=0x0000)) 
+	/* Standard Address or Compaq LTE Address */
+	if (!((hw_addr[2]==0x00aa && ((hw_addr[1] & 0xff00)==0x0000)) ||
+	      (hw_addr[2]==0x0080 && ((hw_addr[1] & 0xff00)==0x5F00)))) 
 	{
 		printk("rejected: invalid address %04x%04x%04x\n",
 			hw_addr[2],hw_addr[1],hw_addr[0]);
-		return ENODEV;
+		return -ENODEV;
 	}
 
 	dev->base_addr = ioaddr;
@@ -1060,15 +1070,26 @@ static void eexp_hw_init586(struct device *dev)
         printk("%s: eexp_hw_init586()\n", dev->name);
 #endif
 
-	PRIV(dev)->started = 0;
+	lp->started = 0;
 	set_loopback;
 
 	outb(SIRQ_dis|irqrmap[dev->irq],ioaddr+SET_IRQ);
 	outb_p(i586_RST,ioaddr+EEPROM_Ctrl);
+	udelay(2000);  /* delay 20ms */
+        {
+		unsigned long ofs;
+		for (ofs = 0; ofs < lp->rx_buf_end; ofs += 32) {
+			unsigned long i;
+			outw_p(ofs, ioaddr+SM_PTR);
+			for (i = 0; i < 16; i++) {
+				outw_p(0, ioaddr+SM_ADDR(i<<1));
+			}
+		}
+	}
 
 	outw_p(lp->rx_buf_end,ioaddr+WRITE_PTR);
 	start_code[28] = (dev->flags & IFF_PROMISC)?(start_code[28] | 1):(start_code[28] & ~1);
-	PRIV(dev)->promisc = dev->flags & IFF_PROMISC;
+	lp->promisc = dev->flags & IFF_PROMISC;
 	/* We may die here */
 	outsw(ioaddr, start_code, sizeof(start_code)>>1);
 	outw(CONF_HW_ADDR,ioaddr+WRITE_PTR);
@@ -1205,8 +1226,8 @@ static char namelist[NAMELEN * EEXP_MAX_CARDS] = { 0, };
 
 static struct device dev_eexp[EEXP_MAX_CARDS] = 
 {
-        NULL,         /* will allocate dynamically */
-	0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, express_probe 
+        { NULL,         /* will allocate dynamically */
+	  0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, express_probe },  
 };
 
 int irq[EEXP_MAX_CARDS] = {0, };

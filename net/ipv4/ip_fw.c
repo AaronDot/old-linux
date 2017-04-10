@@ -33,6 +33,12 @@
  *		Jos Vos <jos@xos.nl> 8/2/1996.
  *	Add support for matching on device names.
  *		Jos Vos <jos@xos.nl> 15/2/1996.
+ *	Transparent proxying support.
+ *		Willy Konynenberg <willy@xos.nl> 10/5/96.
+ *	Make separate accounting on incoming and outgoing packets possible.
+ *		Jos Vos <jos@xos.nl> 18/5/1996.
+ *	Add timeout reprieve for idle control channels.
+ *		Keith Owens <kaos@audio.apana.org.au> 05/07/1996.
  *
  *
  * Masquerading functionality
@@ -74,7 +80,6 @@
  * This software is provided ``AS IS'' without any warranties of any kind.
  */
 
-#include <linux/config.h>
 #include <asm/segment.h>
 #include <asm/system.h>
 #include <linux/types.h>
@@ -113,7 +118,7 @@
  *	Implement IP packet firewall
  */
 
-#ifdef CONFIG_IP_FIREWALL_DEBUG 
+#ifdef DEBUG_IP_FIREWALL 
 #define dprintf1(a)		printk(a)
 #define dprintf2(a1,a2)		printk(a1,a2)
 #define dprintf3(a1,a2,a3)	printk(a1,a2,a3)
@@ -130,7 +135,7 @@
 					      (ntohl(a)>>8)&0xFF,\
 					      (ntohl(a))&0xFF);
 
-#ifdef CONFIG_IP_FIREWALL_DEBUG
+#ifdef DEBUG_IP_FIREWALL
 #define dprint_ip(a)	print_ip(a)
 #else
 #define dprint_ip(a)	
@@ -186,26 +191,27 @@ extern inline int port_match(unsigned short *portptr,int nports,unsigned short p
 
 
 /*
- *	Returns 0 if packet should be dropped, 1 if it should be accepted,
- *	and -1 if an ICMP host unreachable packet should be sent.
+ *	Returns one of the generic firewall policies, like FW_ACCEPT.
  *	Also does accounting so you can feed it the accounting chain.
- *	If opt is set to 1, it means that we do this for accounting
- *	purposes (searches all entries and handles fragments different).
- *	If opt is set to 2, it doesn't count a matching packet, which
- *	is used when calling this for checking purposes (IP_FW_CHK_*).
+ *
+ *	The modes is either IP_FW_MODE_FW (normal firewall mode),
+ *	IP_FW_MODE_ACCT_IN or IP_FW_MODE_ACCT_OUT (accounting mode,
+ *	steps through the entire chain and handles fragments
+ *	differently), or IP_FW_MODE_CHK (handles user-level check,
+ *	counters are not updated).
  */
 
 
-int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int policy, int opt)
+int ip_fw_chk(struct iphdr *ip, struct device *rif, __u16 *redirport, struct ip_fw *chain, int policy, int mode)
 {
 	struct ip_fw *f;
-	struct tcphdr		*tcp=(struct tcphdr *)((unsigned long *)ip+ip->ihl);
-	struct udphdr		*udp=(struct udphdr *)((unsigned long *)ip+ip->ihl);
-	struct icmphdr		*icmp=(struct icmphdr *)((unsigned long *)ip+ip->ihl);
+	struct tcphdr		*tcp=(struct tcphdr *)((__u32 *)ip+ip->ihl);
+	struct udphdr		*udp=(struct udphdr *)((__u32 *)ip+ip->ihl);
+	struct icmphdr		*icmp=(struct icmphdr *)((__u32 *)ip+ip->ihl);
 	__u32			src, dst;
 	__u16			src_port=0xFFFF, dst_port=0xFFFF, icmp_type=0xFF;
 	unsigned short		f_prt=0, prt;
-	char			notcpsyn=1, notcpack=1, match;
+	char			notcpsyn=0, notcpack=0, match;
 	unsigned short		offset;
 	int			answer;
 	unsigned char		tosand, tosxor;
@@ -245,8 +251,9 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 	if (offset == 1 && ip->protocol == IPPROTO_TCP)
 		return FW_BLOCK;
 		
-	if (offset!=0 && (opt != 1) && (ip->protocol == IPPROTO_TCP ||
-			ip->protocol == IPPROTO_UDP || ip->protocol == IPPROTO_ICMP))
+	if (offset!=0 && !(mode & (IP_FW_MODE_ACCT_IN|IP_FW_MODE_ACCT_OUT)) &&
+		(ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP ||
+			ip->protocol == IPPROTO_ICMP))
 		return FW_ACCEPT;
 		
 	/*
@@ -258,9 +265,11 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 	
 	/*
 	 *	Too short.
+	 *
+	 *	But only too short for a packet with ports...
 	 */
 	 
-	else if(ntohs(ip->tot_len)<8+(ip->ihl<<2))
+	else if((ntohs(ip->tot_len)<8+(ip->ihl<<2))&&(ip->protocol==IPPROTO_TCP || ip->protocol==IPPROTO_UDP))
 		return FW_BLOCK;
 		
 	src = ip->saddr;
@@ -283,12 +292,12 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 			if (!offset) {
 				src_port=ntohs(tcp->source);
 				dst_port=ntohs(tcp->dest);
-				if(tcp->ack)
-					/* We *DO* have ACK, value FALSE */
-					notcpack=0;
-				if(tcp->syn && notcpack)
-					/* We *DO* have SYN, value FALSE */
-					notcpsyn=0;
+				if(!tcp->ack && !tcp->rst)
+					/* We do NOT have ACK, value TRUE */
+					notcpack=1;
+				if(!tcp->syn || !notcpack)
+					/* We do NOT have SYN, value TRUE */
+					notcpsyn=1;
 			}
 			prt=IP_FW_F_TCP;
 			break;
@@ -313,7 +322,7 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 			prt=IP_FW_F_ALL;
 			break;
 	}
-#ifdef CONFIG_IP_FIREWALL_DEBUG
+#ifdef DEBUG_IP_FIREWALL
 	dprint_ip(ip->saddr);
 	
 	if (ip->protocol==IPPROTO_TCP || ip->protocol==IPPROTO_UDP)
@@ -358,53 +367,59 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 			/* reverse direction */
 			match |= 0x02;
 
-		if (match)
-		{
-			/*
-			 *	Look for a VIA address match 
-			 */
-			if(f->fw_via.s_addr && rif)
-			{
-				if(rif->pa_addr!=f->fw_via.s_addr)
-					continue;	/* Mismatch */
-			}
-
-			/*
-			 *	Look for a VIA device match 
-			 */
-			if(f->fw_viadev)
-			{
-				if(rif!=f->fw_viadev)
-					continue;	/* Mismatch */
-			}
-
-			/*
-			 *	Drop through - this is a match
-			 */
-		}
-		else
+		if (!match)
 			continue;
+
+		/*
+		 *	Look for a VIA address match 
+		 */
+		if(f->fw_via.s_addr && rif)
+		{
+			if(rif->pa_addr!=f->fw_via.s_addr)
+				continue;	/* Mismatch */
+		}
+
+		/*
+		 *	Look for a VIA device match 
+		 */
+		if(f->fw_viadev)
+		{
+			if(rif!=f->fw_viadev)
+				continue;	/* Mismatch */
+		}
 
 		/*
 		 *	Ok the chain addresses match.
 		 */
 
+#ifdef CONFIG_IP_ACCT
+		/*
+		 *	See if we're in accounting mode and only want to
+		 *	count incoming or outgoing packets.
+		 */
+
+		if (mode & (IP_FW_MODE_ACCT_IN|IP_FW_MODE_ACCT_OUT) &&
+		   ((mode == IP_FW_MODE_ACCT_IN && f->fw_flg&IP_FW_F_ACCTOUT) ||
+		    (mode == IP_FW_MODE_ACCT_OUT && f->fw_flg&IP_FW_F_ACCTIN)))
+			continue;
+
+#endif
+		/*
+		 * For all non-TCP packets and/or non-first fragments,
+		 * notcpsyn and notcpack will always be FALSE,
+		 * so the IP_FW_F_TCPSYN and IP_FW_F_TCPACK flags
+		 * are actually ignored for these packets.
+		 */
+		 
+		if((f->fw_flg&IP_FW_F_TCPSYN) && notcpsyn)
+		 	continue;
+
+		if((f->fw_flg&IP_FW_F_TCPACK) && notcpack)
+		 	continue;
+
 		f_prt=f->fw_flg&IP_FW_F_KIND;
 		if (f_prt!=IP_FW_F_ALL) 
 		{
-			/*
-			 * This is actually buggy as if you set ACK/SYN flags
-			 * on UDP or ICMP firewall it will never work,but 
-			 * actually it is a concern of software which sets
-			 * firewall entries.
-			 */
-			 
-			if((f->fw_flg&IP_FW_F_TCPSYN) && notcpsyn)
-			 	continue;
-
-			if((f->fw_flg&IP_FW_F_TCPACK) && notcpack)
-			 	continue;
-
 			/*
 			 *	Specific firewall - packet's protocol
 			 *	must match firewall's.
@@ -429,6 +444,7 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 				continue;
 			}
 		}
+
 #ifdef CONFIG_IP_FIREWALL_VERBOSE
 		/*
 		 * VERY ugly piece of code which actually
@@ -437,53 +453,72 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 
 		if (f->fw_flg & IP_FW_F_PRN)
 		{
-			if(opt != 1) {
+			__u32 *opt = (__u32 *) (ip + 1);
+			int opti;
+
+			if(mode == IP_FW_MODE_ACCT_IN)
+				printk(KERN_INFO "IP acct in ");
+			else if(mode == IP_FW_MODE_ACCT_OUT)
+				printk(KERN_INFO "IP acct out ");
+			else {
+				if(chain == ip_fw_fwd_chain)
+					printk(KERN_INFO "IP fw-fwd ");
+				else if(chain == ip_fw_in_chain)
+					printk(KERN_INFO "IP fw-in ");
+				else
+					printk(KERN_INFO "IP fw-out ");
 				if(f->fw_flg&IP_FW_F_ACCEPT) {
-					if(f->fw_flg&IP_FW_F_MASQ)
-						printk("masq ");
+					if(f->fw_flg&IP_FW_F_REDIR)
+						printk("acc/r%d ", f->fw_pts[f->fw_nsp+f->fw_ndp]);
+					else if(f->fw_flg&IP_FW_F_MASQ)
+						printk("acc/masq ");
 					else
-						printk("acc  ");
+						printk("acc ");
 				} else if(f->fw_flg&IP_FW_F_ICMPRPL)
-					printk("rej  ");
+					printk("rej ");
 				else
 					printk("deny ");
 			}
-			if (rif)
-				printk("%s ", rif->name);
+			printk(rif ? rif->name : "-");
 			switch(ip->protocol)
 			{
 				case IPPROTO_TCP:
-					printk("TCP ");
+					printk(" TCP ");
 					break;
 				case IPPROTO_UDP:
-					printk("UDP ");
+					printk(" UDP ");
 					break;
 				case IPPROTO_ICMP:
-					printk("ICMP:%d ", icmp_type);
+					printk(" ICMP/%d ", icmp_type);
 					break;
 				default:
-					printk("p=%d ",ip->protocol);
+					printk(" PROTO=%d ", ip->protocol);
 					break;
 			}
 			print_ip(ip->saddr);
 			if(ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP)
-				printk(":%d", src_port);
+				printk(":%hu", src_port);
 			printk(" ");
 			print_ip(ip->daddr);
 			if(ip->protocol == IPPROTO_TCP || ip->protocol == IPPROTO_UDP)
-				printk(":%d",dst_port);
+				printk(":%hu", dst_port);
+			printk(" L=%hu S=0x%2.2hX I=%hu F=0x%4.4hX T=%hu",
+				ntohs(ip->tot_len), ip->tos, ntohs(ip->id),
+				ntohs(ip->frag_off), ip->ttl);
+			for (opti = 0; opti < (ip->ihl - sizeof(struct iphdr) / 4); opti++)
+				printk(" O=0x%8.8X", *opt++);
 			printk("\n");
 		}
 #endif		
-		if (opt != 2) {
+		if (mode != IP_FW_MODE_CHK) {
 			f->fw_bcnt+=ntohs(ip->tot_len);
 			f->fw_pcnt++;
 		}
-		if (opt != 1)
+		if (!(mode & (IP_FW_MODE_ACCT_IN|IP_FW_MODE_ACCT_OUT)))
 			break;
 	} /* Loop */
 	
-	if (opt != 1) {
+	if (!(mode & (IP_FW_MODE_ACCT_IN|IP_FW_MODE_ACCT_OUT))) {
 
 		/*
 		 * We rely on policy defined in the rejecting entry or, if no match
@@ -506,7 +541,26 @@ int ip_fw_chk(struct iphdr *ip, struct device *rif, struct ip_fw *chain, int pol
 			ip->tos = (old_tos & tosand) ^ tosxor;
 			if (ip->tos != old_tos)
 		 		ip_send_check(ip);
-			answer=(policy&IP_FW_F_MASQ)?FW_MASQUERADE:FW_ACCEPT;
+#ifdef CONFIG_IP_TRANSPARENT_PROXY
+			if (policy&IP_FW_F_REDIR) {
+				if (redirport)
+					if ((*redirport = htons(f->fw_pts[f->fw_nsp+f->fw_ndp])) == 0) {
+						/* Wildcard redirection.
+						 * Note that redirport will become
+						 * 0xFFFF for non-TCP/UDP packets.
+						 */
+						*redirport = htons(dst_port);
+					}
+				answer = FW_REDIRECT;
+			} else
+#endif
+#ifdef CONFIG_IP_MASQUERADE
+			if (policy&IP_FW_F_MASQ)
+				answer = FW_MASQUERADE;
+			else
+#endif
+				answer = FW_ACCEPT;
+			
 		} else if(policy&IP_FW_F_ICMPRPL)
 			answer = FW_REJECT;
 		else
@@ -557,7 +611,7 @@ static int insert_in_chain(struct ip_fw *volatile* chainptr, struct ip_fw *frwl,
 	ftmp = kmalloc( sizeof(struct ip_fw), GFP_ATOMIC );
 	if ( ftmp == NULL ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl:  malloc said no\n");
 #endif
 		return( ENOMEM );
@@ -599,7 +653,7 @@ static int append_to_chain(struct ip_fw *volatile* chainptr, struct ip_fw *frwl,
 	ftmp = kmalloc( sizeof(struct ip_fw), GFP_ATOMIC );
 	if ( ftmp == NULL ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl:  malloc said no\n");
 #endif
 		return( ENOMEM );
@@ -651,7 +705,7 @@ static int del_from_chain(struct ip_fw *volatile*chainptr, struct ip_fw *frwl)
 
 	if ( ftmp == NULL ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl:  chain is empty\n");
 #endif
 		restore_flags(flags);
@@ -720,7 +774,7 @@ struct ip_fw *check_ipfw_struct(struct ip_fw *frwl, int len)
 
 	if ( len != sizeof(struct ip_fw) )
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl: len=%d, want %d\n",len, sizeof(struct ip_fw));
 #endif
 		return(NULL);
@@ -728,16 +782,34 @@ struct ip_fw *check_ipfw_struct(struct ip_fw *frwl, int len)
 
 	if ( (frwl->fw_flg & ~IP_FW_F_MASK) != 0 )
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl: undefined flag bits set (flags=%x)\n",
 			frwl->fw_flg);
 #endif
 		return(NULL);
 	}
 
+#ifndef CONFIG_IP_TRANSPARENT_PROXY
+	if (frwl->fw_flg & IP_FW_F_REDIR) {
+#ifdef DEBUG_IP_FIREWALL
+		printk("ip_fw_ctl: unsupported flag IP_FW_F_REDIR\n");
+#endif
+		return(NULL);
+	}
+#endif
+
+#ifndef CONFIG_IP_MASQUERADE
+	if (frwl->fw_flg & IP_FW_F_MASQ) {
+#ifdef DEBUG_IP_FIREWALL
+		printk("ip_fw_ctl: unsupported flag IP_FW_F_MASQ\n");
+#endif
+		return(NULL);
+	}
+#endif
+
 	if ( (frwl->fw_flg & IP_FW_F_SRNG) && frwl->fw_nsp < 2 ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl: src range set but fw_nsp=%d\n",
 			frwl->fw_nsp);
 #endif
@@ -746,16 +818,16 @@ struct ip_fw *check_ipfw_struct(struct ip_fw *frwl, int len)
 
 	if ( (frwl->fw_flg & IP_FW_F_DRNG) && frwl->fw_ndp < 2 ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl: dst range set but fw_ndp=%d\n",
 			frwl->fw_ndp);
 #endif
 		return(NULL);
 	}
 
-	if ( frwl->fw_nsp + frwl->fw_ndp > IP_FW_MAX_PORTS ) 
+	if ( frwl->fw_nsp + frwl->fw_ndp > (frwl->fw_flg & IP_FW_F_REDIR ? IP_FW_MAX_PORTS - 1 : IP_FW_MAX_PORTS) ) 
 	{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 		printk("ip_fw_ctl: too many ports (%d+%d)\n",
 			frwl->fw_nsp,frwl->fw_ndp);
 #endif
@@ -769,14 +841,6 @@ struct ip_fw *check_ipfw_struct(struct ip_fw *frwl, int len)
 
 
 #ifdef CONFIG_IP_ACCT
-
-#if 0
-void ip_acct_cnt(struct iphdr *iph, struct device *dev, struct ip_fw *f)
-{
-	(void) ip_fw_chk(iph, dev, f, 0, 1);
-	return;
-}
-#endif
 
 int ip_acct_ctl(int stage, void *m, int len)
 {
@@ -810,23 +874,112 @@ int ip_acct_ctl(int stage, void *m, int len)
 				/*
  				 *	Should be panic but... (Why ??? - AC)
 				 */
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 				printk("ip_acct_ctl:  unknown request %d\n",stage);
 #endif
 				return(EINVAL);
 		}
 	}
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 	printk("ip_acct_ctl:  unknown request %d\n",stage);
 #endif
 	return(EINVAL);
 }
 #endif
 
+#ifdef CONFIG_IP_MASQUERADE_IPAUTOFW
+
+int ip_autofw_add(struct ip_autofw * af)
+{
+	struct ip_autofw * newaf;
+	init_timer(&af->timer);
+	newaf = kmalloc( sizeof(struct ip_autofw), GFP_ATOMIC );
+	if ( newaf == NULL ) 
+	{
+#ifdef DEBUG_IP_FIREWALL
+		printk("ip_autofw_add:  malloc said no\n");
+#endif
+		return( ENOMEM );
+	}
+
+	memcpy(newaf, af, sizeof(struct ip_autofw));
+	newaf->timer.data = (unsigned long) newaf;
+	newaf->timer.function = ip_autofw_expire;
+	newaf->timer.expires = 0;
+	newaf->lastcontact=0;
+	newaf->next=ip_autofw_hosts;
+	ip_autofw_hosts=newaf;
+	return(0);
+}
+
+int ip_autofw_del(struct ip_autofw * af)
+{
+	struct ip_autofw * prev, * curr;
+	prev=NULL;
+	curr=ip_autofw_hosts;
+	while (curr)
+	{
+		if (af->type     == curr->type &&
+		    af->low      == curr->low &&
+		    af->high     == curr->high &&
+		    af->hidden   == curr->hidden &&
+		    af->visible  == curr->visible &&
+		    af->protocol == curr->protocol &&
+		    af->where    == curr->where &&
+		    af->ctlproto == curr->ctlproto &&
+		    af->ctlport  == curr->ctlport)
+		{
+			if (prev)
+			{
+				prev->next=curr->next;
+	 			kfree_s(curr,sizeof(struct ip_autofw));
+				return(0);
+			}
+			else
+			{
+	 			kfree_s(ip_autofw_hosts,sizeof(struct ip_autofw));
+				ip_autofw_hosts=curr->next;
+				return(0);
+			}
+		}
+		prev=curr;
+		curr=curr->next;
+	}
+	return(EINVAL);
+}
+
+int ip_autofw_flush(void)
+{
+	struct ip_autofw * af;
+	while (ip_autofw_hosts)
+	{
+		af=ip_autofw_hosts;
+		ip_autofw_hosts=ip_autofw_hosts->next;
+		kfree_s(af,sizeof(struct ip_autofw));
+	}
+	return(0);
+}
+
+int ip_autofw_ctl(int stage, void *m, int len)
+{
+	if (stage == IP_AUTOFW_ADD)
+		return (ip_autofw_add((struct ip_autofw *) m));
+
+	if (stage == IP_AUTOFW_DEL)
+		return (ip_autofw_del((struct ip_autofw *) m));
+	
+	if (stage == IP_AUTOFW_FLUSH)
+		return (ip_autofw_flush());
+	
+	return(EINVAL);
+}
+
+#endif /* CONFIG_IP_MASQUERADE_IPAUTOFW */
+
 #ifdef CONFIG_IP_FIREWALL
 int ip_fw_ctl(int stage, void *m, int len)
 {
-	int ret, cmd, fwtype;
+	int cmd, fwtype;
 
 	cmd = stage & IP_FW_COMMAND;
 	fwtype = (stage & IP_FW_TYPE) >> IP_FW_SHIFT;
@@ -859,7 +1012,7 @@ int ip_fw_ctl(int stage, void *m, int len)
 
 		if ( len != sizeof(struct ip_fwpkt) )
 		{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 			printk("ip_fw_ctl: length=%d, expected %d\n",
 				len, sizeof(struct ip_fwpkt));
 #endif
@@ -870,33 +1023,38 @@ int ip_fw_ctl(int stage, void *m, int len)
 	 	ip = &(ipfwp->fwp_iph);
 
 		if ( !(viadev = dev_get(ipfwp->fwp_vianame)) ) {
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 			printk("ip_fw_ctl: invalid device \"%s\"\n", ipfwp->fwp_vianame);
 #endif
 			return(EINVAL);
 		} else if ( viadev->pa_addr != ipfwp->fwp_via.s_addr ) {
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 			printk("ip_fw_ctl: device \"%s\" has another IP address\n",
 				ipfwp->fwp_vianame);
 #endif
 			return(EINVAL);
 		} else if ( ip->ihl != sizeof(struct iphdr) / sizeof(int)) {
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 			printk("ip_fw_ctl: ip->ihl=%d, want %d\n",ip->ihl,
 					sizeof(struct iphdr)/sizeof(int));
 #endif
 			return(EINVAL);
 		}
 
-		if ((ret = ip_fw_chk(ip, viadev, *chains[fwtype],
-				*policies[fwtype], 2)) == FW_ACCEPT)
-			return(0);
-	    	else if (ret == FW_MASQUERADE)	
-			return(ECONNRESET);
-	    	else if (ret == FW_REJECT)	
-			return(ECONNREFUSED);
-		else /* ret == FW_BLOCK */
-			return(ETIMEDOUT);
+		switch (ip_fw_chk(ip, viadev, NULL, *chains[fwtype],
+				*policies[fwtype], IP_FW_MODE_CHK))
+		{
+			case FW_ACCEPT:
+				return(0);
+	    		case FW_REDIRECT:
+				return(ECONNABORTED);
+	    		case FW_MASQUERADE:
+				return(ECONNRESET);
+	    		case FW_REJECT:
+				return(ECONNREFUSED);
+			default: /* FW_BLOCK */
+				return(ETIMEDOUT);
+		}
 	}
 
 	if ( cmd == IP_FW_MASQ_TIMEOUTS )
@@ -906,7 +1064,7 @@ int ip_fw_ctl(int stage, void *m, int len)
 
 		if ( len != sizeof(struct ip_fw_masq) )
 		{
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 			printk("ip_fw_ctl (masq): length %d, expected %d\n",
 				len, sizeof(struct ip_fw_masq));
 
@@ -964,14 +1122,14 @@ int ip_fw_ctl(int stage, void *m, int len)
 			/*
 	 		 *	Should be panic but... (Why are BSD people panic obsessed ??)
 			 */
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 				printk("ip_fw_ctl:  unknown request %d\n",stage);
 #endif
 				return(EINVAL);
 		}
 	} 
 
-#ifdef DEBUG_CONFIG_IP_FIREWALL
+#ifdef DEBUG_IP_FIREWALL
 	printk("ip_fw_ctl:  unknown request %d\n",stage);
 #endif
 	return(EINVAL);
@@ -987,6 +1145,7 @@ static int ip_chain_procinfo(int stage, char *buffer, char **start,
 	struct ip_fw *i;
 	unsigned long flags;
 	int len, p;
+	int last_len = 0;
 	
 
 	switch(stage)
@@ -1031,7 +1190,7 @@ static int ip_chain_procinfo(int stage, char *buffer, char **start,
 			ntohl(i->fw_dst.s_addr),ntohl(i->fw_dmsk.s_addr),
 			(i->fw_vianame)[0] ? i->fw_vianame : "-",
 			ntohl(i->fw_via.s_addr),i->fw_flg);
-		len+=sprintf(buffer+len,"%u %u %-9lu %-9lu",
+		len+=sprintf(buffer+len,"%u %u %-10lu %-10lu",
 			i->fw_nsp,i->fw_ndp, i->fw_pcnt,i->fw_bcnt);
 		for (p = 0; p < IP_FW_MAX_PORTS; p++)
 			len+=sprintf(buffer+len, " %u", i->fw_pts[p]);
@@ -1044,14 +1203,18 @@ static int ip_chain_procinfo(int stage, char *buffer, char **start,
 			len=0;
 			begin=pos;
 		}
+		else if(pos>offset+length)
+		{
+			len = last_len;
+			break;		
+		}
 		else if(reset)
 		{
 			/* This needs to be done at this specific place! */
 			i->fw_pcnt=0L;
 			i->fw_bcnt=0L;
 		}
-		if(pos>offset+length)
-			break;
+		last_len = len;
 		i=i->fw_next;
 	}
 	restore_flags(flags);
@@ -1104,19 +1267,19 @@ static int ip_fw_fwd_procinfo(char *buffer, char **start, off_t offset,
  *	Interface to the generic firewall chains.
  */
  
-int ipfw_input_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr)
+int ipfw_input_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr, void *arg)
 {
-	return ip_fw_chk(phdr, dev, ip_fw_in_chain, ip_fw_in_policy, 0);
+	return ip_fw_chk(phdr, dev, arg, ip_fw_in_chain, ip_fw_in_policy, IP_FW_MODE_FW);
 }
 
-int ipfw_output_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr)
+int ipfw_output_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr, void *arg)
 {
-	return ip_fw_chk(phdr, dev, ip_fw_out_chain, ip_fw_out_policy, 0);
+	return ip_fw_chk(phdr, dev, arg, ip_fw_out_chain, ip_fw_out_policy, IP_FW_MODE_FW);
 }
 
-int ipfw_forward_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr)
+int ipfw_forward_check(struct firewall_ops *this, int pf, struct device *dev, void *phdr, void *arg)
 {
-	return ip_fw_chk(phdr, dev, ip_fw_fwd_chain, ip_fw_fwd_policy, 0);
+	return ip_fw_chk(phdr, dev, arg, ip_fw_fwd_chain, ip_fw_fwd_policy, IP_FW_MODE_FW);
 }
  
 struct firewall_ops ipfw_ops=
@@ -1173,6 +1336,7 @@ static struct notifier_block ipfw_dev_notifier={
 
 void ip_fw_init(void)
 {
+#ifdef CONFIG_PROC_FS
 #ifdef CONFIG_IP_ACCT
 	proc_net_register(&(struct proc_dir_entry) {
 		PROC_NET_IPACCT, 7, "ip_acct",
@@ -1181,11 +1345,13 @@ void ip_fw_init(void)
 		ip_acct_procinfo
 	});
 #endif
+#endif
 #ifdef CONFIG_IP_FIREWALL
 
 	if(register_firewall(PF_INET,&ipfw_ops)<0)
 		panic("Unable to register IP firewall.\n");
-		
+
+#ifdef CONFIG_PROC_FS		
 	proc_net_register(&(struct proc_dir_entry) {
 		PROC_NET_IPFWIN, 8, "ip_input",
 		S_IFREG | S_IRUGO | S_IWUSR, 1, 0, 0,
@@ -1205,7 +1371,7 @@ void ip_fw_init(void)
 		ip_fw_fwd_procinfo
 	});
 #endif
-
+#endif
 #ifdef CONFIG_IP_MASQUERADE
         
         /*

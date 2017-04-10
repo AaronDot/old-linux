@@ -45,6 +45,8 @@
 #include <linux/skbuff.h>
 #include <linux/genhd.h>
 #include <linux/swap.h>
+#include <linux/ctype.h>
+#include <linux/file.h>
 
 extern unsigned char aux_device_present, kbd_read_mask;
 
@@ -59,20 +61,22 @@ extern unsigned char aux_device_present, kbd_read_mask;
 #include <linux/kerneld.h>
 #endif
 #include <asm/irq.h>
-#ifdef __SMP__
-#include <linux/smp.h>
-#endif
 
 extern char *get_options(char *str, int *ints);
-extern void set_device_ro(int dev,int flag);
+extern void set_device_ro(kdev_t dev,int flag);
 extern struct file_operations * get_blkfops(unsigned int);
 extern void blkdev_release(struct inode * inode);
 
 extern void *sys_call_table;
 
-extern int sys_tz;
+extern struct timezone sys_tz;
 extern int request_dma(unsigned int dmanr, char * deviceID);
 extern void free_dma(unsigned int dmanr);
+
+extern void hard_reset_now(void);
+
+extern void select_free_wait(select_table * p);
+extern int select_check(int flag, select_table * wait, struct file * file);
 
 struct symbol_table symbol_table = {
 #include <linux/symtab_begin.h>
@@ -82,7 +86,8 @@ struct symbol_table symbol_table = {
 #endif
 
 	/* stackable module support */
-	X(register_symtab),
+	X(register_symtab_from),
+	X(get_module_symbol),
 #ifdef CONFIG_KERNELD
 	X(kerneld_send),
 #endif
@@ -118,8 +123,6 @@ struct symbol_table symbol_table = {
 	X(verify_area),
 	X(do_mmap),
 	X(do_munmap),
-	X(insert_vm_struct),
-	X(merge_segments),
 	X(exit_mm),
 
 	/* internal kernel memory management */
@@ -157,11 +160,15 @@ struct symbol_table symbol_table = {
 	X(getblk),
 	X(bread),
 	X(breada),
+
+	X(select_check),
+	X(select_free_wait),
+
 	X(__brelse),
 	X(__bforget),
 	X(ll_rw_block),
+	X(brw_page),
 	X(__wait_on_buffer),
-	X(__wait_on_page),
 	X(mark_buffer_uptodate),
 	X(unlock_buffer),
 	X(dcache_lookup),
@@ -170,6 +177,8 @@ struct symbol_table symbol_table = {
 	X(generic_file_read),
 	X(generic_file_mmap),
 	X(generic_readpage),
+	X(__fput),
+	X(make_bad_inode),
 
 	/* device registration */
 	X(register_chrdev),
@@ -189,6 +198,8 @@ struct symbol_table symbol_table = {
 	X(hardsect_size),
 	X(blk_size),
 	X(blk_dev),
+	X(max_sectors),
+	X(max_segments),
 	X(is_read_only),
 	X(set_device_ro),
 	X(bmap),
@@ -196,6 +207,12 @@ struct symbol_table symbol_table = {
 	X(get_blkfops),
 	X(blkdev_open),
 	X(blkdev_release),
+	X(gendisk_head),
+	X(resetup_one_dev),
+	X(unplug_device),
+	X(make_request),
+	X(tq_disk),
+
 #ifdef CONFIG_SERIAL	
 	/* Module creation of serial units */
 	X(register_serial),
@@ -228,6 +245,11 @@ struct symbol_table symbol_table = {
 	/* sysctl table registration */
 	X(register_sysctl_table),
 	X(unregister_sysctl_table),
+	X(sysctl_string),
+	X(sysctl_intvec),
+	X(proc_dostring),
+	X(proc_dointvec),
+	X(proc_dointvec_minmax),
 
 	/* interrupt handling */
 	X(request_irq),
@@ -282,6 +304,7 @@ struct symbol_table symbol_table = {
 	X(kill_proc),
 	X(kill_pg),
 	X(kill_sl),
+	X(force_sig),
 
 	/* misc */
 	X(panic),
@@ -292,6 +315,10 @@ struct symbol_table symbol_table = {
 	X(simple_strtoul),
 	X(system_utsname),
 	X(sys_call_table),
+	X(hard_reset_now),
+	X(_ctype),
+	X(_ctmp),
+	X(get_random_bytes),
 
 	/* Signal interfaces */
 	X(send_sig),
@@ -307,17 +334,6 @@ struct symbol_table symbol_table = {
 	/* Miscellaneous access points */
 	X(si_meminfo),
 
-#ifndef CONFIG_SCSI
-	/*
-	 * With no scsi configured, we still need to export a few
-	 * symbols so that scsi can be loaded later via insmod.
-	 * Don't remove this unless you are 100% sure of what you are
-	 * doing.  If you want to remove this, you don't know what
-	 * you are doing!
-	 */
-	X(gendisk_head),
-	X(resetup_one_dev),
-#endif
 	/* Added to make file system as module */
 	X(set_writetime),
 	X(sys_tz),
@@ -329,7 +345,6 @@ struct symbol_table symbol_table = {
 	X(___strtok),
 	X(init_fifo),
 	X(super_blocks),
-	X(reuse_list),
 	X(fifo_inode_operations),
 	X(chrdev_inode_operations),
 	X(blkdev_inode_operations),
@@ -339,6 +354,8 @@ struct symbol_table symbol_table = {
 	X(insert_inode_hash),
 	X(event),
 	X(__down),
+	X(__up),
+	X(securelevel),
 /* all busmice */
 	X(add_mouse_randomness),
 	X(fasync_helper),
@@ -359,6 +376,13 @@ struct symbol_table symbol_table = {
 	X(get_write_access),
 	X(put_write_access),
 
+#ifdef CONFIG_PROC_FS
+	X(proc_dir_inode_operations),
+#endif
+
+	/* Modular sound */
+	X(sys_open),
+	X(sys_read),
 	/********************************************************
 	 * Do not add anything below this line,
 	 * as the stacked modules depend on this!

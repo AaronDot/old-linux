@@ -6,7 +6,7 @@
  *
  *
  * This file is subject to the terms and conditions of the GNU General Public
- * License.  See the file README.legal in the main directory of this archive
+ * License.  See the file COPYING in the main directory of this archive
  * for more details.
  */
 
@@ -132,7 +132,7 @@ void stdma_release(void)
 
 int stdma_others_waiting(void)
 {
-	return stdma_wait != NULL;
+	return waitqueue_active(&stdma_wait);
 }
 
 

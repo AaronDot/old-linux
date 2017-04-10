@@ -14,6 +14,7 @@
 #include <linux/stat.h>
 #include <linux/malloc.h>
 #include <linux/kerneld.h>
+#include <linux/interrupt.h>
 
 #include <asm/segment.h>
 
@@ -49,7 +50,7 @@ void msg_init (void)
 
 /*
  * If the send queue is full, try to free any old messages.
- * These are most probably unwanted, since noone has picked them up...
+ * These are most probably unwanted, since no one has picked them up...
  */
 #define MSG_FLUSH_TIME 10 /* seconds */
 static void flush_msg(struct msqid_ds *msq)
@@ -192,8 +193,7 @@ static int real_msgsnd (int msqid, struct msgbuf *msgp, size_t msgsz, int msgflg
 	msq->msg_lspid = current->pid;
 	msq->msg_stime = CURRENT_TIME;
 	restore_flags(flags);
-	if (msq->rwait)
-		wake_up (&msq->rwait);
+	wake_up (&msq->rwait);
 	return 0;
 }
 
@@ -349,8 +349,7 @@ static int real_msgrcv (int msqid, struct msgbuf *msgp, size_t msgsz, long msgty
 			msghdrs--; 
 			msq->msg_cbytes -= nmsg->msg_ts;
 			restore_flags(flags);
-			if (msq->wwait)
-				wake_up (&msq->wwait);
+			wake_up (&msq->wwait);
 			/*
 			 * Calls from kernel level (IPC_KERNELD set)
 			 * wants the message copied to kernel space!
@@ -437,8 +436,7 @@ found:
 	msq = (struct msqid_ds *) kmalloc (sizeof (*msq), GFP_KERNEL);
 	if (!msq) {
 		msgque[id] = (struct msqid_ds *) IPC_UNUSED;
-		if (msg_lock)
-			wake_up (&msg_lock);
+		wake_up (&msg_lock);
 		return -ENOMEM;
 	}
 	ipcp = &msq->msg_perm;
@@ -458,8 +456,7 @@ found:
 		max_msqid = id;
 	msgque[id] = msq;
 	used_queues++;
-	if (msg_lock)
-		wake_up (&msg_lock);
+	wake_up (&msg_lock);
 	return (unsigned int) msq->msg_perm.seq * MSGMNI + id;
 }
 
@@ -524,11 +521,9 @@ static void freeque (int id)
 		while (max_msqid && (msgque[--max_msqid] == IPC_UNUSED));
 	msgque[id] = (struct msqid_ds *) IPC_UNUSED;
 	used_queues--;
-	while (msq->rwait || msq->wwait) {
-		if (msq->rwait)
-			wake_up (&msq->rwait); 
-		if (msq->wwait)
-			wake_up (&msq->wwait);
+	while (waitqueue_active(&msq->rwait) || waitqueue_active(&msq->wwait)) {
+		wake_up (&msq->rwait); 
+		wake_up (&msq->wwait);
 		schedule(); 
 	}
 	for (msgp = msq->msg_first; msgp; msgp = msgh ) {
@@ -613,6 +608,8 @@ asmlinkage int sys_msgctl (int msqid, int cmd, struct msqid_ds *buf)
 		err = verify_area (VERIFY_WRITE, buf, sizeof(*buf));
 		if (err)
 			return err;
+		break;
+	default:
 		break;
 	}
 

@@ -18,6 +18,7 @@
  */
 
 #define KEYBOARD_IRQ 1
+#define DISABLE_KBD_DURING_INTERRUPTS 0
 
 #include <linux/sched.h>
 #include <linux/interrupt.h>
@@ -69,14 +70,6 @@ static int initialize_kbd(void);
 #define KBD_DEFLOCK 0
 #endif
 
-/*
- * The default IO slowdown is doing 'inb()'s from 0x61, which should be
- * safe. But as that is the keyboard controller chip address, we do our
- * slowdowns here by doing short jumps: the keyboard controller should
- * be able to keep up
- */
-#define REALLY_SLOW_IO
-#define SLOW_IO_BY_JUMPING
 #include <asm/io.h>
 #include <asm/system.h>
 
@@ -173,7 +166,7 @@ static inline void kb_wait(void)
 	for (i=0; i<0x100000; i++)
 		if ((inb_p(0x64) & 0x02) == 0)
 			return;
-	printk("Keyboard timed out\n");
+	printk(KERN_WARNING "Keyboard timed out\n");
 }
 
 static inline void send_cmd(unsigned char c)
@@ -337,68 +330,57 @@ int getkeycode(unsigned int scancode)
 	    e0_keys[scancode - 128];
 }
 
-static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+#if DISABLE_KBD_DURING_INTERRUPTS
+#define disable_keyboard()	do { send_cmd(0xAD); kb_wait(); } while (0)
+#define enable_keyboard()	send_cmd(0xAE)
+#else
+#define disable_keyboard()	/* nothing */
+#define enable_keyboard()	/* nothing */
+#endif
+
+static void handle_scancode(unsigned char scancode)
 {
-	unsigned char scancode, keycode;
+	unsigned char keycode;
 	static unsigned int prev_scancode = 0;   /* remember E0, E1 */
 	char up_flag;				 /* 0 or 0200 */
 	char raw_mode;
-	int status;
 
-	pt_regs = regs;
-	send_cmd(0xAD);		/* disable keyboard */
-	kb_wait();
-	status = inb_p(0x64);
-	if ((status & kbd_read_mask) != 0x01) {
-	  /*
-	   * On some platforms (Alpha XL for one), the init code may leave
-	   *  an interrupt hanging, yet with status indicating no data.
-	   * After making sure that there's no data indicated and its not a
-	   *  mouse interrupt, we will read the data register to clear it.
-	   * If we don't do this, the data reg stays full and will not
-	   *  allow new data or interrupt from the keyboard. Sigh...
-	   */
-	  if (!(status & 0x21)) { /* neither ODS nor OBF */
-	    scancode = inb(0x60); /* read data anyway */
-#if 0
-	    printk("keyboard: status 0x%x  mask 0x%x  data 0x%x\n",
-		   status, kbd_read_mask, scancode);
-#endif
-	  }
-	  goto end_kbd_intr;
-	}
-	scancode = inb(0x60);
-	mark_bh(KEYBOARD_BH);
 	if (reply_expected) {
 	  /* 0xfa, 0xfe only mean "acknowledge", "resend" for most keyboards */
 	  /* but they are the key-up scancodes for PF6, PF10 on a FOCUS 9000 */
 		reply_expected = 0;
 		if (scancode == 0xfa) {
 			acknowledge = 1;
-			goto end_kbd_intr;
+			return;
 		} else if (scancode == 0xfe) {
 			resend = 1;
-			goto end_kbd_intr;
+			return;
 		}
 		/* strange ... */
 		reply_expected = 1;
 #if 0
-		printk("keyboard reply expected - got %02x\n", scancode);
+		printk(KERN_DEBUG "keyboard reply expected - got %02x\n",
+		       scancode);
 #endif
 	}
 	if (scancode == 0) {
 #ifdef KBD_REPORT_ERR
-		printk("keyboard buffer overflow\n");
+		printk(KERN_INFO "keyboard buffer overflow\n");
 #endif
 		prev_scancode = 0;
-		goto end_kbd_intr;
+		return;
 	}
 	do_poke_blanked_console = 1;
 	mark_bh(CONSOLE_BH);
 	add_keyboard_randomness(scancode);
 
-	tty = ttytab[fg_console];
- 	kbd = kbd_table + fg_console;
+	tty = ttytab? ttytab[fg_console]: NULL;
+	if (tty && (!tty->driver_data)) {
+		/* This is to workaround ugly bug in tty_io.c, which
+                   does not do locking when it should */
+		tty = NULL;
+	}
+	kbd = kbd_table + fg_console;
 	if ((raw_mode = (kbd->kbdmode == VC_RAW))) {
  		put_queue(scancode);
 		/* we do not return yet, because we want to maintain
@@ -412,16 +394,16 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 #ifndef KBD_IS_FOCUS_9000
 #ifdef KBD_REPORT_ERR
 		if (!raw_mode)
-		  printk("keyboard error\n");
+		  printk(KERN_DEBUG "keyboard error\n");
 #endif
 #endif
 		prev_scancode = 0;
-		goto end_kbd_intr;
+		return;
 	}
 
 	if (scancode == 0xe0 || scancode == 0xe1) {
 		prev_scancode = scancode;
-		goto end_kbd_intr;
+		return;
  	}
 
  	/*
@@ -438,17 +420,17 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	  if (prev_scancode != 0xe0) {
 	      if (prev_scancode == 0xe1 && scancode == 0x1d) {
 		  prev_scancode = 0x100;
-		  goto end_kbd_intr;
+		  return;
 	      } else if (prev_scancode == 0x100 && scancode == 0x45) {
 		  keycode = E1_PAUSE;
 		  prev_scancode = 0;
 	      } else {
 #ifdef KBD_REPORT_UNKN
 		  if (!raw_mode)
-		    printk("keyboard: unknown e1 escape sequence\n");
+		    printk(KERN_INFO "keyboard: unknown e1 escape sequence\n");
 #endif
 		  prev_scancode = 0;
-		  goto end_kbd_intr;
+		  return;
 	      }
 	  } else {
 	      prev_scancode = 0;
@@ -466,16 +448,17 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	       *  So, we should also ignore the latter. - aeb@cwi.nl
 	       */
 	      if (scancode == 0x2a || scancode == 0x36)
-		goto end_kbd_intr;
+		return;
 
 	      if (e0_keys[scancode])
 		keycode = e0_keys[scancode];
 	      else {
 #ifdef KBD_REPORT_UNKN
 		  if (!raw_mode)
-		    printk("keyboard: unknown scancode e0 %02x\n", scancode);
+		    printk(KERN_INFO "keyboard: unknown scancode e0 %02x\n",
+			   scancode);
 #endif
-		  goto end_kbd_intr;
+		  return;
 	      }
 	  }
 	} else if (scancode >= SC_LIM) {
@@ -494,11 +477,11 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 	  if (!keycode) {
 	      if (!raw_mode) {
 #ifdef KBD_REPORT_UNKN
-		  printk("keyboard: unrecognized scancode (%02x) - ignored\n"
-			 , scancode);
+		  printk(KERN_INFO "keyboard: unrecognized scancode (%02x)"
+			 " - ignored\n", scancode);
 #endif
 	      }
-	      goto end_kbd_intr;
+	      return;
 	  }
  	} else
 	  keycode = scancode;
@@ -524,12 +507,12 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
  		rep = set_bit(keycode, key_down);
 
 	if (raw_mode)
-		goto end_kbd_intr;
+		return;
 
 	if (kbd->kbdmode == VC_MEDIUMRAW) {
 		/* soon keycodes will require more than one byte */
  		put_queue(keycode + up_flag);
-		goto end_kbd_intr;
+		return;
  	}
 
  	/*
@@ -590,9 +573,32 @@ static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 #endif
 		}
 	}
+}
 
-end_kbd_intr:
-	send_cmd(0xAE);         /* enable keyboard */
+static void keyboard_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+{
+	unsigned char status;
+
+	pt_regs = regs;
+	disable_keyboard();
+
+	status = inb_p(0x64);
+	do {
+		unsigned char scancode;
+
+		/* mouse data? */
+		if (status & kbd_read_mask & 0x20)
+			break;
+
+		scancode = inb(0x60);
+		if (status & 0x01)
+			handle_scancode(scancode);
+
+		status = inb(0x64);
+	} while (status & 0x01);
+
+	mark_bh(KEYBOARD_BH);
+	enable_keyboard();
 }
 
 static void put_queue(int ch)
@@ -796,7 +802,7 @@ static void do_spec(unsigned char value, char up_flag)
 
 static void do_lowercase(unsigned char value, char up_flag)
 {
-	printk("keyboard.c: do_lowercase was called - impossible\n");
+	printk(KERN_ERR "keyboard.c: do_lowercase was called - impossible\n");
 }
 
 static void do_self(unsigned char value, char up_flag)
@@ -821,8 +827,9 @@ static void do_self(unsigned char value, char up_flag)
 #define A_CFLEX  '^'
 #define A_TILDE  '~'
 #define A_DIAER  '"'
-static unsigned char ret_diacr[] =
-	{A_GRAVE, A_ACUTE, A_CFLEX, A_TILDE, A_DIAER };
+#define A_CEDIL  ','
+static unsigned char ret_diacr[NR_DEAD] =
+	{A_GRAVE, A_ACUTE, A_CFLEX, A_TILDE, A_DIAER, A_CEDIL };
 
 /* If a dead key pressed twice, output a character corresponding to it,	*/
 /* otherwise just remember the dead key.				*/
@@ -878,7 +885,7 @@ static void do_fn(unsigned char value, char up_flag)
 		if (func_table[value])
 			puts_queue(func_table[value]);
 	} else
-		printk("do_fn called with value=%d\n", value);
+		printk(KERN_ERR "do_fn called with value=%d\n", value);
 }
 
 static void do_pad(unsigned char value, char up_flag)
@@ -1076,6 +1083,8 @@ static int send_data(unsigned char data)
 		reply_expected = 1;
 		outb_p(data, 0x60);
 		for(i=0; i<0x200000; i++) {
+			extern void allow_interrupts(void);
+			allow_interrupts();
 			inb_p(0x64);		/* just as a delay */
 			if (acknowledge)
 				return 1;
@@ -1201,7 +1210,7 @@ int kbd_init(void)
 	ttytab = console_driver.table;
 
 	request_irq(KEYBOARD_IRQ, keyboard_interrupt, 0, "keyboard", NULL);
-	request_region(0x60,16,"kbd");
+	request_region(0x60,16,"keyboard");
 #ifdef INIT_KBD
 	initialize_kbd();
 #endif
@@ -1313,7 +1322,8 @@ static int initialize_kbd(void)
 	 */
 	kbd_write(KBD_CNTL_REG, KBD_SELF_TEST);
 	if (kbd_wait_for_input() != 0x55) {
-		printk("initialize_kbd: keyboard failed self test.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "keyboard failed self test.\n");
 		restore_flags(flags);
 		return(-1);
 	}
@@ -1325,7 +1335,8 @@ static int initialize_kbd(void)
 	 */
 	kbd_write(KBD_CNTL_REG, KBD_SELF_TEST2);
 	if (kbd_wait_for_input() != 0x00) {
-		printk("initialize_kbd: keyboard failed self test 2.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "keyboard failed self test 2.\n");
 		restore_flags(flags);
 		return(-1);
 	}
@@ -1341,13 +1352,15 @@ static int initialize_kbd(void)
 	 */
 	kbd_write(KBD_DATA_REG, KBD_RESET);
 	if (kbd_wait_for_input() != KBD_ACK) {
-		printk("initialize_kbd: reset kbd failed, no ACK.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "reset kbd failed, no ACK.\n");
 		restore_flags(flags);
 		return(-1);
 	}
 
 	if (kbd_wait_for_input() != KBD_POR) {
-		printk("initialize_kbd: reset kbd failed, not POR.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "reset kbd failed, not POR.\n");
 		restore_flags(flags);
 		return(-1);
 	}
@@ -1357,7 +1370,8 @@ static int initialize_kbd(void)
 	 */
 	kbd_write(KBD_DATA_REG, KBD_DISABLE);
 	if (kbd_wait_for_input() != KBD_ACK) {
-		printk("initialize_kbd: disable kbd failed, no ACK.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "disable kbd failed, no ACK.\n");
 		restore_flags(flags);
 		return(-1);
 	}
@@ -1375,7 +1389,8 @@ static int initialize_kbd(void)
 	 */
 	kbd_write(KBD_DATA_REG, KBD_ENABLE);
 	if (kbd_wait_for_input() != KBD_ACK) {
-		printk("initialize_kbd: keyboard enable failed.\n");
+		printk(KERN_WARNING "initialize_kbd: "
+		       "keyboard enable failed.\n");
 		restore_flags(flags);
 		return(-1);
 	}

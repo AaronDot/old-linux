@@ -79,10 +79,7 @@
 #include <linux/mm.h>
 #include <net/checksum.h>
 #include <net/slhc_vj.h>
-
-#ifdef __alpha__
-# include <asm/unaligned.h>
-#endif
+#include <asm/unaligned.h>
 
 int last_retran;
 
@@ -110,29 +107,27 @@ slhc_init(int rslots, int tslots)
 	memset(comp, 0, sizeof(struct slcompress));
 
 	if ( rslots > 0  &&  rslots < 256 ) {
-		comp->rstate =
-		  (struct cstate *)kmalloc(rslots * sizeof(struct cstate),
-					   GFP_KERNEL);
+		size_t rsize = rslots * sizeof(struct cstate);
+		comp->rstate = (struct cstate *) kmalloc(rsize, GFP_KERNEL);
 		if (! comp->rstate)
 		{
 			kfree((unsigned char *)comp);
 			return NULL;
 		}
-		memset(comp->rstate, 0, rslots * sizeof(struct cstate));
+		memset(comp->rstate, 0, rsize);
 		comp->rslot_limit = rslots - 1;
 	}
 
 	if ( tslots > 0  &&  tslots < 256 ) {
-		comp->tstate =
-		  (struct cstate *)kmalloc(tslots * sizeof(struct cstate),
-					   GFP_KERNEL);
+		size_t tsize = tslots * sizeof(struct cstate);
+		comp->tstate = (struct cstate *) kmalloc(tsize, GFP_KERNEL);
 		if (! comp->tstate)
 		{
 			kfree((unsigned char *)comp->rstate);
 			kfree((unsigned char *)comp);
 			return NULL;
 		}
-		memset(comp->tstate, 0, tslots * sizeof(struct cstate));
+		memset(comp->tstate, 0, tsize);
 		comp->tslot_limit = tslots - 1;
 	}
 
@@ -251,6 +246,14 @@ slhc_compress(struct slcompress *comp, unsigned char *icp, int isize,
 	struct iphdr *ip;
 	struct tcphdr *th, *oth;
 
+
+	/*
+	 *	Don't play with runt packets.
+	 */
+	 
+	if(isize<sizeof(struct iphdr))
+		return isize;
+		
 	ip = (struct iphdr *) icp;
 
 	/* Bail if this packet isn't TCP, or is an IP fragment */
@@ -269,9 +272,10 @@ slhc_compress(struct slcompress *comp, unsigned char *icp, int isize,
 	hlen = ip->ihl*4 + th->doff*4;
 
 	/*  Bail if the TCP packet isn't `compressible' (i.e., ACK isn't set or
-	 *  some other control bit is set).
+	 *  some other control bit is set). Also uncompressible if
+	 *  its a runt.
 	 */
-	if(th->syn || th->fin || th->rst ||
+	if(hlen > isize || th->syn || th->fin || th->rst ||
 	    ! (th->ack)){
 		/* TCP connection stuff; send as regular IP */
 		comp->sls_o_tcp++;
@@ -619,11 +623,8 @@ slhc_uncompress(struct slcompress *comp, unsigned char *icp, int isize)
 	  cp += (ip->ihl - 5) * 4;
 	}
 
-#ifdef __alpha__
-	stw_u(ip_fast_csum(icp, ip->ihl), &((struct iphdr *)icp)->check);
-#else
-	((struct iphdr *)icp)->check = ip_fast_csum(icp, ((struct iphdr*)icp)->ihl);
-#endif
+	put_unaligned(ip_fast_csum(icp, ip->ihl),
+		      &((struct iphdr *)icp)->check);
 
 	memcpy(cp, thp, 20);
 	cp += 20;

@@ -17,6 +17,11 @@
  *		Larry McVoy	:	Tiny tweak to double performance
  *		Alan Cox	:	Backed out LMV's tweak - the linux mm
  *					can't take it...
+ *              Michael Griffith:       Don't bother computing the checksums
+ *                                      on packets received on the loopback
+ *                                      interface.
+ *		Alexey Kuznetsov:	Potential hang under some extreme
+ *					cases removed.
  *
  *		This program is free software; you can redistribute it and/or
  *		modify it under the terms of the GNU General Public License
@@ -70,9 +75,9 @@ static int loopback_xmit(struct sk_buff *skb, struct device *dev)
 	{
 	  	struct sk_buff *skb2=skb;
 	  	skb=skb_clone(skb, GFP_ATOMIC);		/* Clone the buffer */
-	  	if(skb==NULL)
-	  		return 1;
 	  	dev_kfree_skb(skb2, FREE_WRITE);
+	  	if(skb==NULL)
+	  		return 0;
   		unlock=0;
 	}
 	else if(skb->sk)
@@ -119,7 +124,6 @@ int loopback_init(struct device *dev)
 	dev->mtu		= LOOPBACK_MTU;
 	dev->tbusy		= 0;
 	dev->hard_start_xmit	= loopback_xmit;
-	dev->open		= NULL;
 	dev->hard_header	= eth_header;
 	dev->hard_header_len	= ETH_HLEN;		/* 14			*/
 	dev->addr_len		= ETH_ALEN;		/* 6			*/

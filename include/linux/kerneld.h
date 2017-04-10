@@ -1,6 +1,8 @@
 #ifndef _LINUX_KERNELD_H
 #define _LINUX_KERNELD_H
 
+#include <linux/posix_types.h>
+
 #define KERNELD_SYSTEM 1
 #define KERNELD_REQUEST_MODULE 2 /* "insmod" */
 #define KERNELD_RELEASE_MODULE 3 /* "rmmod" */
@@ -12,7 +14,7 @@
 
 /*
  * Uncomment the following line for the new kerneld protocol
- * This includes the pid of the kernel level requestor into the kerneld header
+ * This includes the pid of the kernel level requester into the kerneld header
  */
 /*
 #define NEW_KERNELD_PROTOCOL

@@ -62,7 +62,6 @@
 */
 
 #include <linux/module.h>
-#include <linux/config.h>	/* for CONFIG_IP_FORWARD */
 
 /* Only two headers!! :-) */
 #include <net/ip.h>
@@ -86,7 +85,6 @@
 #define TUNL_HLEN	(((ETH_HLEN+15)&~15)+tunnel_hlen)
 
 
-#ifdef MODULE
 static int tunnel_open(struct device *dev)
 {
 	MOD_INC_USE_COUNT;
@@ -98,8 +96,6 @@ static int tunnel_close(struct device *dev)
 	MOD_DEC_USE_COUNT;
 	return 0;
 }
-
-#endif
 
 #ifdef TUNNEL_DEBUG
 void print_ip(struct iphdr *ip)
@@ -165,7 +161,7 @@ static int tunnel_xmit(struct sk_buff *skb, struct device *dev)
 	 *  routing tables
 	 */
 	iph = (struct iphdr *) skb->data;
-	if ((rt = ip_rt_route(iph->daddr, 0)) == NULL)
+	if ((rt = ip_rt_route(iph->daddr, 0, skb->sk?skb->sk->bound_device:NULL)) == NULL)
 	{ 
 		/* No route to host */
 		/* Where did the packet come from? */
@@ -198,7 +194,7 @@ static int tunnel_xmit(struct sk_buff *skb, struct device *dev)
 	}
 	ip_rt_put(rt);
 
-	if ((rt = ip_rt_route(target, 0)) == NULL)
+	if ((rt = ip_rt_route(target, 0, skb->sk?skb->sk->bound_device:NULL)) == NULL)
 	{ 
 		/* No route to host */
 		/* Where did the packet come from? */
@@ -236,8 +232,9 @@ printk("Room left at head: %d\n", skb_headroom(skb));
 printk("Room left at tail: %d\n", skb_tailroom(skb));
 printk("Required room: %d, Tunnel hlen: %d\n", max_headroom, TUNL_HLEN);
 #endif
-	if (skb_headroom(skb) >= max_headroom) {
+	if (skb_headroom(skb) >= max_headroom && skb->free) {
 		skb->h.iph = (struct iphdr *) skb_push(skb, tunnel_hlen);
+		skb_device_unlock(skb);
 	} else {
 		struct sk_buff *new_skb;
 
@@ -264,11 +261,13 @@ printk("Required room: %d, Tunnel hlen: %d\n", max_headroom, TUNL_HLEN);
 		 * and new_skb->ip_hdr is the IP header of the old packet.
 		 */
 		new_skb->ip_hdr = (struct iphdr *) skb_put(new_skb, skb->len);
+		new_skb->dev = skb->dev;
 		memcpy(new_skb->ip_hdr, skb->data, skb->len);
 		memset(new_skb->proto_priv, 0, sizeof(skb->proto_priv));
 
 		/* Tack on our header */
 		new_skb->h.iph = (struct iphdr *) skb_push(new_skb, tunnel_hlen);
+		new_skb->mac.raw = (void *)new_skb->ip_hdr;
 
 		/* Free the old packet, we no longer need it */
 		dev_kfree_skb(skb, FREE_WRITE);
@@ -291,7 +290,7 @@ printk("Required room: %d, Tunnel hlen: %d\n", max_headroom, TUNL_HLEN);
 	iph->tot_len		=	htons(skb->len);
 	iph->id			=	htons(ip_id_count++);	/* Race condition here? */
 	ip_send_check(iph);
-	skb->ip_hdr 		= skb->h.iph;
+	skb->ip_hdr 		=	skb->h.iph;
 	skb->protocol		=	htons(ETH_P_IP);
 #ifdef TUNNEL_DEBUG
 	printk("New IP Header....\n");
@@ -304,9 +303,10 @@ printk("Required room: %d, Tunnel hlen: %d\n", max_headroom, TUNL_HLEN);
 	 *	If ip_forward() made a copy, it will return 1 so we can free.
 	 */
 
-#ifdef CONFIG_IP_FORWARD
-	if (ip_forward(skb, dev, 0, target))
-#endif
+	if (sysctl_ip_forward) {
+		if (ip_forward(skb, dev, IPFWD_NOTTLDEC, target))
+			kfree_skb(skb, FREE_WRITE);
+	} else
 		kfree_skb(skb, FREE_WRITE);
 
 	/*
@@ -348,10 +348,8 @@ int tunnel_init(struct device *dev)
 	}
 
 	/* Add our tunnel functions to the device */
-#ifdef MODULE
 	dev->open		= tunnel_open;
 	dev->stop		= tunnel_close;
-#endif
 	dev->hard_start_xmit	= tunnel_xmit;
 	dev->get_stats		= tunnel_get_stats;
 	dev->priv = kmalloc(sizeof(struct enet_statistics), GFP_KERNEL);

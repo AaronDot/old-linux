@@ -2,8 +2,9 @@
 #define __NET_NETLINK_H
 
 #define NET_MAJOR 36		/* Major 18 is reserved for networking 						*/
-#define MAX_LINKS 9		/* 18,0 for route updates, 18,1 for SKIP, 18,2 debug tap 18,3 PPP reserved 	*/
-				/* 4-7 are psi0-psi3 */
+#define MAX_LINKS 11		/* 18,0 for route updates, 18,1 for SKIP, 18,2 debug tap 18,3 PPP reserved 	*/
+				/* 4-7 are psi0-psi3  8 is arpd 9 is ppp */
+				/* 10 is for IPSEC <John Ioannidis> */
 #define MAX_QBYTES 32768	/* Maximum bytes in the queue 							*/
 
 #include <linux/config.h>
@@ -20,6 +21,8 @@ extern int init_netlink(void);
 #define NETLINK_FIREWALL	3	/* Firewalling hook				*/
 #define NETLINK_PSI		4	/* PSI devices - 4 to 7 */
 #define NETLINK_ARPD		8
+#define NETLINK_NET_PPP		9	/* Non tty PPP devices */
+#define NETLINK_IPSEC		10	/* IPSEC */
 
 #ifdef CONFIG_RTNETLINK
 extern void ip_netlink_msg(unsigned long, __u32, __u32, __u32, short, short, char *);

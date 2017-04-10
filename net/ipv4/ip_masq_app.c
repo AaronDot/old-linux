@@ -2,7 +2,7 @@
  *		IP_MASQ_APP application masquerading module
  *
  *
- * Version:	@(#)ip_masq_app.c  0.03      03/96
+ * Version:	@(#)ip_masq_app.c  0.04      96/06/17
  *
  * Author:	Juan Jose Ciarlante, <jjciarla@raiz.uncu.edu.ar>
  *
@@ -13,7 +13,9 @@
  *	2 of the License, or (at your option) any later version.
  *
  * Fixes:
- *	JJC		: Implemented also input pkt hook
+ *	JJC			: Implemented also input pkt hook
+ *	Miquel van Smoorenburg	: Copy more stuff when resizing skb
+ *	Harald Hoyer/James R. Leu: Additional ipautofw support
  *
  *
  * FIXME:
@@ -21,6 +23,7 @@
  *	
  */
 
+#include <linux/config.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -184,7 +187,11 @@ static __inline__ int ip_masq_app_bind_chg(struct ip_masq_app *mapp, int delta)
 struct ip_masq_app * ip_masq_bind_app(struct ip_masq *ms)
 {
         struct ip_masq_app * mapp;
-        mapp = ip_masq_app_get(ms->protocol, ms->dport);
+	mapp = ip_masq_app_get(ms->protocol, ms->dport);
+#ifdef CONFIG_IP_MASQUERADE_IPAUTOFW
+	if (mapp == NULL)
+		mapp = ip_masq_app_get(ms->protocol, ms->sport);
+#endif
         if (mapp != NULL) {
                 /*
                  *	don't allow binding if already bound
@@ -438,24 +445,25 @@ int ip_masq_app_getinfo(char *buffer, char **start, off_t offset, int length, in
         struct ip_masq_app * mapp;
         unsigned idx;
 
-	if (offset < 22)
-		len=sprintf(buffer,"%-21s\n", "prot port    n_attach");
-	pos = 22;
+	if (offset < 40)
+		len=sprintf(buffer,"%-39s\n", "prot port    n_attach name");
+	pos = 40;
 
         for (idx=0 ; idx < IP_MASQ_APP_TAB_SIZE; idx++)
                 for (mapp = ip_masq_app_base[idx]; mapp ; mapp = mapp->next) {
 			/* 
 			 * If you change the length of this sprintf, then all
 			 * the length calculations need fixing too!
-			 * Line length = 22 (3 + 2 + 7 + 1 + 7 + 1 + 1)
+			 * Line length = 40 (3 + 2 + 7 + 1 + 7 + 1 + 2 + 17)
 			 */
-			pos += 22;
+			pos += 40;
 			if (pos < offset)
 				continue;
 
-                        len += sprintf(buffer+len, "%-3s  %-7u %-7d \n",
+                        len += sprintf(buffer+len, "%-3s  %-7u %-7d  %-17s\n",
                                        masq_proto_name(IP_MASQ_APP_PROTO(mapp->type)),
-                                       IP_MASQ_APP_PORT(mapp->type), mapp->n_attach);
+                                       IP_MASQ_APP_PORT(mapp->type), mapp->n_attach,
+				       mapp->name);
 
                         if(len >= length)
                                 goto done;
@@ -478,14 +486,14 @@ int ip_masq_app_init(void)
 {
         
         register_symtab (&ip_masq_app_syms);
-        
+#ifdef CONFIG_PROC_FS        
 	proc_net_register(&(struct proc_dir_entry) {
 		PROC_NET_IP_MASQ_APP, 11, "ip_masq_app",
 		S_IFREG | S_IRUGO, 1, 0, 0,
 		0, &proc_net_inode_operations,
 		ip_masq_app_getinfo
  	});
-        
+#endif        
         return 0;
 }
 
@@ -500,6 +508,7 @@ static struct sk_buff * skb_replace(struct sk_buff *skb, int pri, char *o_buf, i
 {
         int maxsize, diff, o_offset;
         struct sk_buff *n_skb;
+	int offset;
 
 	maxsize = skb->truesize - sizeof(struct sk_buff);
 
@@ -519,7 +528,9 @@ static struct sk_buff * skb_replace(struct sk_buff *skb, int pri, char *o_buf, i
 	    skb->end = skb->head+n_len;
 	} else {
                 /*
-                 * 	Sizes differ, make a copy
+                 * 	Sizes differ, make a copy.
+                 *
+                 *	FIXME: move this to core/sbuff.c:skb_grow()
                  */
         
                 n_skb = alloc_skb(MAX_HEADER + skb->len + diff, pri);
@@ -532,8 +543,22 @@ static struct sk_buff * skb_replace(struct sk_buff *skb, int pri, char *o_buf, i
                 n_skb->free = skb->free;
                 skb_reserve(n_skb, MAX_HEADER);
                 skb_put(n_skb, skb->len + diff);
-                n_skb->h.raw = n_skb->data + (skb->h.raw - skb->data);
-                
+
+                /*
+                 *	Copy as much data from the old skb as possible. Even
+                 *	though we're only forwarding packets, we need stuff
+                 *	like skb->protocol (PPP driver wants it).
+                 */
+                offset = n_skb->data - skb->data;
+                n_skb->h.raw = skb->h.raw + offset;
+                n_skb->when = skb->when;
+                n_skb->dev = skb->dev;
+                n_skb->mac.raw = skb->mac.raw + offset;
+                n_skb->ip_hdr = (struct iphdr *)(((char *)skb->ip_hdr)+offset);
+                n_skb->pkt_type = skb->pkt_type;
+                n_skb->protocol = skb->protocol;
+                n_skb->ip_summed = skb->ip_summed;
+
                 /*
                  * Copy pkt in new buffer
                  */

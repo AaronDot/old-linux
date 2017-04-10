@@ -23,7 +23,7 @@ extern struct file_operations ufs_symlink_operations;
 
 void ufs_print_inode(struct inode * inode)
 {
-	printk("ino %lu  mode 0%6.6o  lk %d  uid %d  gid %d  sz %lu  blks %lu  cnt %u\n",
+	printk("ino %lu  mode 0%6.6o  lk %d  uid %d  gid %d  sz %lu  blks %lu  cnt %lu\n",
 	       inode->i_ino, inode->i_mode, inode->i_nlink, inode->i_uid, inode->i_gid, inode->i_size, inode->i_blocks, inode->i_count);
 	printk("  db <0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x 0x%x>\n",
 	       inode->u.ufs_i.ui_db[0], inode->u.ufs_i.ui_db[1],
@@ -185,7 +185,7 @@ void ufs_read_inode(struct inode * inode)
 
 	if (S_ISCHR(inode->i_mode) || S_ISBLK(inode->i_mode)) {
 	        /* XXX - should be ui_db[1] on little endian ufs filesystems */
-	        inode->i_rdev = ufsip->ui_db[0];
+	        inode->i_rdev = to_kdev_t(ufsip->ui_db[0]);
 	}
 
 	/* XXX - implement fast and slow symlinks */

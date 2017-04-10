@@ -8,7 +8,7 @@ unknown.
 (++roman: That's me... :-)
 
 This file is subject to the terms and conditions of the GNU General Public
-License.  See the file README.legal in the main directory of this archive
+License.  See the file COPYING in the main directory of this archive
 for more details.
 
 */
@@ -17,7 +17,6 @@ for more details.
 #include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/major.h>
-#include <linux/config.h>
 #include <linux/fcntl.h>
 #include <linux/errno.h>
 #include <linux/mm.h>
