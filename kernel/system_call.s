@@ -1,7 +1,13 @@
 /*
+ *  linux/kernel/system_call.s
+ *
+ *  (C) 1991  Linus Torvalds
+ */
+
+/*
  *  system_call.s  contains the system-call low-level handling routines.
  * This also contains the timer-interrupt handler, as some of the code is
- * the same. The hd-interrupt is also here.
+ * the same. The hd- and flopppy-interrupts are also here.
  *
  * NOTE: This code handles signal-recognition, which happens every time
  * after a timer-interrupt and after each system call. Ordinary interrupts
@@ -132,14 +138,50 @@ ret_from_sys_call:
 	pop	%ds
 	iret
 
-default_signal:
-	incl	%ecx
-	cmpl	$SIG_CHLD,%ecx
-	je	2b
+.align 2
+_coprocessor_error:
+	push	%ds
+	push	%es
+	push	%fs
+	pushl	%edx
 	pushl	%ecx
-	call	_do_exit	# remember to set bit 7 when dumping core
-	addl	$4,%esp
-	jmp	3b
+	pushl	%ebx
+	pushl	%eax
+	movl	$0x10,%eax
+	mov	%ax,%ds
+	mov	%ax,%es
+	movl	$0x17,%eax
+	mov	%ax,%fs
+	pushl	$ret_from_sys_call
+	jmp	_math_error
+
+.align 2
+_device_not_available:
+	push	%ds
+	push	%es
+	push	%fs
+	pushl	%edx
+	pushl	%ecx
+	pushl	%ebx
+	pushl	%eax
+	movl	$0x10,%eax
+	mov	%ax,%ds
+	mov	%ax,%es
+	movl	$0x17,%eax
+	mov	%ax,%fs
+	pushl	$ret_from_sys_call
+	clts				# clear TS so that we can use math
+	movl	%cr0,%eax
+	testl	$0x4,%eax		# EM (math emulation bit)
+	je	_math_state_restore
+	pushl	%ebp
+	pushl	%esi
+	pushl	%edi
+	call	_math_emulate
+	popl	%edi
+	popl	%esi
+	popl	%ebp
+	ret
 
 .align 2
 _timer_interrupt:
@@ -200,19 +242,55 @@ _hd_interrupt:
 	movl	$0x17,%eax
 	mov	%ax,%fs
 	movb	$0x20,%al
-	outb	%al,$0x20		# EOI to interrupt controller #1
+	outb	%al,$0xA0		# EOI to interrupt controller #1
 	jmp	1f			# give port chance to breathe
 1:	jmp	1f
-1:	outb	%al,$0xA0		# same to controller #2
-	movl	_do_hd,%eax
+1:	xorl	%edx,%edx
+	xchgl	_do_hd,%edx
+	testl	%edx,%edx
+	jne	1f
+	movl	$_unexpected_hd_interrupt,%edx
+1:	outb	%al,$0x20
+	call	*%edx			# "interesting" way of handling intr.
+	pop	%fs
+	pop	%es
+	pop	%ds
+	popl	%edx
+	popl	%ecx
+	popl	%eax
+	iret
+
+_floppy_interrupt:
+	pushl	%eax
+	pushl	%ecx
+	pushl	%edx
+	push	%ds
+	push	%es
+	push	%fs
+	movl	$0x10,%eax
+	mov	%ax,%ds
+	mov	%ax,%es
+	movl	$0x17,%eax
+	mov	%ax,%fs
+	movb	$0x20,%al
+	outb	%al,$0x20		# EOI to interrupt controller #1
+	xorl	%eax,%eax
+	xchgl	_do_floppy,%eax
 	testl	%eax,%eax
 	jne	1f
-	movl	$_unexpected_hd_interrupt,%eax
+	movl	$_unexpected_floppy_interrupt,%eax
 1:	call	*%eax			# "interesting" way of handling intr.
 	pop	%fs
 	pop	%es
 	pop	%ds
 	popl	%edx
 	popl	%ecx
+	popl	%eax
+	iret
+
+_parallel_interrupt:
+	pushl	%eax
+	movb	$0x20,%al
+	outb	%al,$0x20
 	popl	%eax
 	iret

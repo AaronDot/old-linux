@@ -1,3 +1,9 @@
+/*
+ *  linux/fs/bitmap.c
+ *
+ *  (C) 1991  Linus Torvalds
+ */
+
 /* bitmap.c contains the code that handles the inode and block bitmaps */
 #include <string.h>
 
@@ -12,12 +18,14 @@ __asm__("cld\n\t" \
 
 #define set_bit(nr,addr) ({\
 register int res __asm__("ax"); \
-__asm__("btsl %2,%3\n\tsetb %%al":"=a" (res):"" (0),"r" (nr),"m" (*(addr))); \
+__asm__ __volatile__("btsl %2,%3\n\tsetb %%al": \
+"=a" (res):"0" (0),"r" (nr),"m" (*(addr))); \
 res;})
 
 #define clear_bit(nr,addr) ({\
 register int res __asm__("ax"); \
-__asm__("btrl %2,%3\n\tsetnb %%al":"=a" (res):"" (0),"r" (nr),"m" (*(addr))); \
+__asm__ __volatile__("btrl %2,%3\n\tsetnb %%al": \
+"=a" (res):"0" (0),"r" (nr),"m" (*(addr))); \
 res;})
 
 #define find_first_zero(addr) ({ \

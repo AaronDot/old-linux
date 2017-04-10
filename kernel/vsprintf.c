@@ -1,3 +1,9 @@
+/*
+ *  linux/kernel/vsprintf.c
+ *
+ *  (C) 1991  Linus Torvalds
+ */
+
 /* vsprintf.c -- Lars Wirzenius & Linus Torvalds. */
 /*
  * Wirzenius wrote this portably, Torvalds fucked it up :-)
@@ -7,14 +13,14 @@
 #include <string.h>
 
 /* we use this so that we can do without the ctype library */
-#define is_digit(c)     ((c) >= '' && (c) <= '9')
+#define is_digit(c)	((c) >= '0' && (c) <= '9')
 
 static int skip_atoi(const char **s)
 {
 	int i=0;
 
 	while (is_digit(**s))
-		i = i*10 + *((*s)++) - '';
+		i = i*10 + *((*s)++) - '0';
 	return i;
 }
 
@@ -28,7 +34,7 @@ static int skip_atoi(const char **s)
 
 #define do_div(n,base) ({ \
 int __res; \
-__asm__("divl %4":"=a" (n),"=d" (__res):"" (n),"1" (0),"r" (base)); \
+__asm__("divl %4":"=a" (n),"=d" (__res):"0" (n),"1" (0),"r" (base)); \
 __res; })
 
 static char * number(char * str, int num, int base, int size, int precision
@@ -42,7 +48,7 @@ static char * number(char * str, int num, int base, int size, int precision
 	if (type&LEFT) type &= ~ZEROPAD;
 	if (base<2 || base>36)
 		return 0;
-	c = (type & ZEROPAD) ? '' : ' ' ;
+	c = (type & ZEROPAD) ? '0' : ' ' ;
 	if (type&SIGN && num<0) {
 		sign='-';
 		num = -num;
@@ -54,7 +60,7 @@ static char * number(char * str, int num, int base, int size, int precision
 		else if (base==8) size--;
 	i=0;
 	if (num==0)
-		tmp[i++]='';
+		tmp[i++]='0';
 	else while (num!=0)
 		tmp[i++]=digits[do_div(num,base)];
 	if (i>precision) precision=i;
@@ -66,16 +72,16 @@ static char * number(char * str, int num, int base, int size, int precision
 		*str++ = sign;
 	if (type&SPECIAL)
 		if (base==8)
-			*str++ = '';
+			*str++ = '0';
 		else if (base==16) {
-			*str++ = '';
+			*str++ = '0';
 			*str++ = digits[33];
 		}
 	if (!(type&LEFT))
 		while(size-->0)
 			*str++ = c;
 	while(i<precision--)
-		*str++ = '';
+		*str++ = '0';
 	while(i-->0)
 		*str++ = tmp[i];
 	while(size-->0)
@@ -113,7 +119,7 @@ int vsprintf(char *buf, const char *fmt, va_list args)
 				case '+': flags |= PLUS; goto repeat;
 				case ' ': flags |= SPACE; goto repeat;
 				case '#': flags |= SPECIAL; goto repeat;
-				case '': flags |= ZEROPAD; goto repeat;
+				case '0': flags |= ZEROPAD; goto repeat;
 				}
 
 		/* get field width */

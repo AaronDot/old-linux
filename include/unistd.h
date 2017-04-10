@@ -5,7 +5,7 @@
 #define _POSIX_VERSION 198808L
 
 #define _POSIX_CHOWN_RESTRICTED	/* only root can do a chown (I think..) */
-/* #define _POSIX_NO_TRUNC*/	/* pathname truncation (but see in kernel) */
+#define _POSIX_NO_TRUNC		/* no pathname truncation (but see in kernel) */
 #define _POSIX_VDISABLE '\0'	/* character to disable things like ^C */
 /*#define _POSIX_SAVED_IDS */	/* we'll get to this yet */
 /*#define _POSIX_JOB_CONTROL */	/* we aren't there quite yet. Soon hopefully */
@@ -128,12 +128,12 @@
 #define _syscall0(type,name) \
 type name(void) \
 { \
-type __res; \
+long __res; \
 __asm__ volatile ("int $0x80" \
 	: "=a" (__res) \
-	: "" (__NR_##name)); \
+	: "0" (__NR_##name)); \
 if (__res >= 0) \
-	return __res; \
+	return (type) __res; \
 errno = -__res; \
 return -1; \
 }
@@ -141,12 +141,12 @@ return -1; \
 #define _syscall1(type,name,atype,a) \
 type name(atype a) \
 { \
-type __res; \
+long __res; \
 __asm__ volatile ("int $0x80" \
 	: "=a" (__res) \
-	: "" (__NR_##name),"b" (a)); \
+	: "0" (__NR_##name),"b" ((long)(a))); \
 if (__res >= 0) \
-	return __res; \
+	return (type) __res; \
 errno = -__res; \
 return -1; \
 }
@@ -154,12 +154,12 @@ return -1; \
 #define _syscall2(type,name,atype,a,btype,b) \
 type name(atype a,btype b) \
 { \
-type __res; \
+long __res; \
 __asm__ volatile ("int $0x80" \
 	: "=a" (__res) \
-	: "" (__NR_##name),"b" (a),"c" (b)); \
+	: "0" (__NR_##name),"b" ((long)(a)),"c" ((long)(b))); \
 if (__res >= 0) \
-	return __res; \
+	return (type) __res; \
 errno = -__res; \
 return -1; \
 }
@@ -167,13 +167,14 @@ return -1; \
 #define _syscall3(type,name,atype,a,btype,b,ctype,c) \
 type name(atype a,btype b,ctype c) \
 { \
-type __res; \
+long __res; \
 __asm__ volatile ("int $0x80" \
 	: "=a" (__res) \
-	: "" (__NR_##name),"b" (a),"c" (b),"d" (c)); \
-if (__res<0) \
-	errno=-__res , __res = -1; \
-return __res;\
+	: "0" (__NR_##name),"b" ((long)(a)),"c" ((long)(b)),"d" ((long)(c))); \
+if (__res>=0) \
+	return (type) __res; \
+errno=-__res; \
+return -1; \
 }
 
 #endif /* __LIBRARY__ */
