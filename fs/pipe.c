@@ -32,7 +32,7 @@ static int pipe_read(struct inode * inode, struct file * filp, char * buf, int c
 			chars = count;
 		if (chars > size)
 			chars = size;
-		memcpy_tofs(buf, (char *)inode->i_size+PIPE_TAIL(*inode), chars );
+		memcpy_tofs(buf, PIPE_BASE(*inode)+PIPE_TAIL(*inode), chars );
 		read += chars;
 		PIPE_TAIL(*inode) += chars;
 		PIPE_TAIL(*inode) &= (PAGE_SIZE-1);
@@ -40,7 +40,11 @@ static int pipe_read(struct inode * inode, struct file * filp, char * buf, int c
 		buf += chars;
 	}
 	wake_up(& PIPE_WRITE_WAIT(*inode));
-	return read?read:-EAGAIN;
+	if (read)
+		return read;
+	if (PIPE_WRITERS(*inode))
+		return -EAGAIN;
+	return 0;
 }
 	
 static int pipe_write(struct inode * inode, struct file * filp, char * buf, int count)
@@ -65,7 +69,7 @@ static int pipe_write(struct inode * inode, struct file * filp, char * buf, int 
 			if (current->signal & ~current->blocked)
 				return written?written:-ERESTARTSYS;
 			if (filp->f_flags & O_NONBLOCK)
-				return -EAGAIN;
+				return written?written:-EAGAIN;
 			else
 				interruptible_sleep_on(&PIPE_WRITE_WAIT(*inode));
 		}
@@ -75,7 +79,7 @@ static int pipe_write(struct inode * inode, struct file * filp, char * buf, int 
 				chars = count;
 			if (chars > size)
 				chars = size;
-			memcpy_fromfs((char *)inode->i_size+PIPE_HEAD(*inode), buf, chars );
+			memcpy_fromfs(PIPE_BASE(*inode)+PIPE_HEAD(*inode), buf, chars );
 			written += chars;
 			PIPE_HEAD(*inode) += chars;
 			PIPE_HEAD(*inode) &= (PAGE_SIZE-1);
@@ -104,13 +108,16 @@ static int bad_pipe_rw(struct inode * inode, struct file * filp, char * buf, int
 }
 
 static int pipe_ioctl(struct inode *pino, struct file * filp,
-	unsigned int cmd, unsigned int arg)
+	unsigned int cmd, unsigned long arg)
 {
+	int error;
+
 	switch (cmd) {
 		case FIONREAD:
-			verify_area((void *) arg,4);
-			put_fs_long(PIPE_SIZE(*pino),(unsigned long *) arg);
-			return 0;
+			error = verify_area(VERIFY_WRITE, (void *) arg,4);
+			if (!error)
+				put_fs_long(PIPE_SIZE(*pino),(unsigned long *) arg);
+			return error;
 		default:
 			return -EINVAL;
 	}
@@ -125,7 +132,52 @@ static int pipe_select(struct inode * inode, struct file * filp, int sel_type, s
 			select_wait(&PIPE_READ_WAIT(*inode), wait);
 			return 0;
 		case SEL_OUT:
-			if (!PIPE_FULL(*inode) || !PIPE_WRITERS(*inode))
+			if (!PIPE_FULL(*inode) || !PIPE_READERS(*inode))
+				return 1;
+			select_wait(&PIPE_WRITE_WAIT(*inode), wait);
+			return 0;
+		case SEL_EX:
+			if (!PIPE_READERS(*inode) || !PIPE_WRITERS(*inode))
+				return 1;
+			select_wait(&inode->i_wait,wait);
+			return 0;
+	}
+	return 0;
+}
+
+/*
+ * The 'connect_xxx()' functions are needed for named pipes when
+ * the open() code hasn't guaranteed a connection (O_NONBLOCK),
+ * and we need to act differently until we do get a writer..
+ */
+static int connect_read(struct inode * inode, struct file * filp, char * buf, int count)
+{
+	while (!PIPE_SIZE(*inode)) {
+		if (PIPE_WRITERS(*inode))
+			break;
+		if (filp->f_flags & O_NONBLOCK)
+			return -EAGAIN;
+		wake_up(& PIPE_WRITE_WAIT(*inode));
+		if (current->signal & ~current->blocked)
+			return -ERESTARTSYS;
+		interruptible_sleep_on(& PIPE_READ_WAIT(*inode));
+	}
+	filp->f_op = &read_pipe_fops;
+	return pipe_read(inode,filp,buf,count);
+}
+
+static int connect_select(struct inode * inode, struct file * filp, int sel_type, select_table * wait)
+{
+	switch (sel_type) {
+		case SEL_IN:
+			if (!PIPE_EMPTY(*inode)) {
+				filp->f_op = &read_pipe_fops;
+				return 1;
+			}
+			select_wait(&PIPE_READ_WAIT(*inode), wait);
+			return 0;
+		case SEL_OUT:
+			if (!PIPE_FULL(*inode))
 				return 1;
 			select_wait(&PIPE_WRITE_WAIT(*inode), wait);
 			return 0;
@@ -163,9 +215,22 @@ static void pipe_rdwr_release(struct inode * inode, struct file * filp)
 }
 
 /*
- * The three file_operations structs are not static because they
+ * The file_operations structs are not static because they
  * are also used in linux/fs/fifo.c to do operations on fifo's.
  */
+struct file_operations connecting_pipe_fops = {
+	pipe_lseek,
+	connect_read,
+	bad_pipe_rw,
+	pipe_readdir,
+	connect_select,
+	pipe_ioctl,
+	NULL,		/* no mmap on pipes.. surprise */
+	NULL,		/* no special open code */
+	pipe_read_release,
+	NULL
+};
+
 struct file_operations read_pipe_fops = {
 	pipe_lseek,
 	pipe_read,
@@ -173,8 +238,10 @@ struct file_operations read_pipe_fops = {
 	pipe_readdir,
 	pipe_select,
 	pipe_ioctl,
+	NULL,		/* no mmap on pipes.. surprise */
 	NULL,		/* no special open code */
-	pipe_read_release
+	pipe_read_release,
+	NULL
 };
 
 struct file_operations write_pipe_fops = {
@@ -184,8 +251,10 @@ struct file_operations write_pipe_fops = {
 	pipe_readdir,
 	pipe_select,
 	pipe_ioctl,
+	NULL,		/* mmap */
 	NULL,		/* no special open code */
-	pipe_write_release
+	pipe_write_release,
+	NULL
 };
 
 struct file_operations rdwr_pipe_fops = {
@@ -195,18 +264,40 @@ struct file_operations rdwr_pipe_fops = {
 	pipe_readdir,
 	pipe_select,
 	pipe_ioctl,
+	NULL,		/* mmap */
 	NULL,		/* no special open code */
-	pipe_rdwr_release
+	pipe_rdwr_release,
+	NULL
 };
 
-int sys_pipe(unsigned long * fildes)
+struct inode_operations pipe_inode_operations = {
+	&rdwr_pipe_fops,
+	NULL,			/* create */
+	NULL,			/* lookup */
+	NULL,			/* link */
+	NULL,			/* unlink */
+	NULL,			/* symlink */
+	NULL,			/* mkdir */
+	NULL,			/* rmdir */
+	NULL,			/* mknod */
+	NULL,			/* rename */
+	NULL,			/* readlink */
+	NULL,			/* follow_link */
+	NULL,			/* bmap */
+	NULL,			/* truncate */
+	NULL			/* permission */
+};
+
+extern "C" int sys_pipe(unsigned long * fildes)
 {
 	struct inode * inode;
 	struct file * f[2];
 	int fd[2];
 	int i,j;
 
-	verify_area(fildes,8);
+	j = verify_area(VERIFY_WRITE,fildes,8);
+	if (j)
+		return j;
 	for(j=0 ; j<2 ; j++)
 		if (!(f[j] = get_empty_filp()))
 			break;
@@ -236,9 +327,10 @@ int sys_pipe(unsigned long * fildes)
 	}
 	f[0]->f_inode = f[1]->f_inode = inode;
 	f[0]->f_pos = f[1]->f_pos = 0;
-	f[0]->f_flags = f[1]->f_flags = 0;
+	f[0]->f_flags = O_RDONLY;
 	f[0]->f_op = &read_pipe_fops;
 	f[0]->f_mode = 1;		/* read */
+	f[1]->f_flags = O_WRONLY;
 	f[1]->f_op = &write_pipe_fops;
 	f[1]->f_mode = 2;		/* write */
 	put_fs_long(fd[0],0+fildes);

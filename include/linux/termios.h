@@ -38,6 +38,15 @@
 #define TIOCPKT		0x5420
 #define FIONBIO		0x5421
 #define TIOCNOTTY	0x5422
+#define TIOCSETD	0x5423
+#define TIOCGETD	0x5424
+#define TCSBRKP		0x5425	/* Needed for POSIX tcsendbreak() */
+#define FIONCLEX	0x5450  /* these numbers need to be adjusted. */
+#define FIOCLEX		0x5451
+#define FIOASYNC	0x5452
+#define TIOCSERCONFIG	0x5453
+#define TIOCSERGWILD	0x5454
+#define TIOCSERSWILD	0x5455
 
 /* Used for packet mode */
 #define TIOCPKT_FLUSHREAD	 1
@@ -64,7 +73,7 @@ struct termio {
 	unsigned char c_cc[NCC];	/* control characters */
 };
 
-#define NCCS 17
+#define NCCS 19
 struct termios {
 	tcflag_t c_iflag;		/* input mode flags */
 	tcflag_t c_oflag;		/* output mode flags */
@@ -174,7 +183,7 @@ struct termios {
 #define HUPCL	0002000
 #define CLOCAL	0004000
 #define CIBAUD	03600000		/* input baud rate (not used) */
-#define CRTSCTS	020000000000		/* flow control */
+#define CRTSCTS	  020000000000		/* flow control */
 
 /* c_lflag bits */
 #define ISIG	0000001
@@ -221,5 +230,10 @@ struct termios {
 #define	TCSANOW		0
 #define	TCSADRAIN	1
 #define	TCSAFLUSH	2
+
+/* line disciplines */
+#define N_TTY		0
+#define N_SLIP		1
+#define N_MOUSE		2
 
 #endif
