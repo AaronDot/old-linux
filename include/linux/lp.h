@@ -100,4 +100,4 @@ struct lp_struct lp_table[] = {
  * function prototypes
  */
 
-extern void lp_init(void);
+extern void lp_init(long);
